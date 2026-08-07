@@ -1,0 +1,110 @@
+.polis-view {
+	padding: 8px 12px;
+}
+
+.polis-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 8px;
+}
+
+.polis-title {
+	font-weight: 600;
+	font-size: 0.9em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.polis-icon-btn {
+	background: none;
+	border: none;
+	box-shadow: none;
+	cursor: pointer;
+	padding: 2px;
+	color: var(--text-muted);
+}
+
+.polis-icon-btn:hover {
+	color: var(--text-normal);
+}
+
+.polis-empty {
+	color: var(--text-muted);
+	font-size: 0.85em;
+	padding: 12px 4px;
+}
+
+.polis-group {
+	margin-bottom: 14px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 6px 8px;
+}
+
+.polis-group-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+
+.polis-group-name {
+	font-weight: 600;
+}
+
+.polis-group-actions {
+	display: flex;
+	gap: 4px;
+}
+
+.polis-group-desc {
+	font-size: 0.8em;
+	color: var(--text-muted);
+	margin: 2px 0 6px;
+}
+
+.polis-vault-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.polis-vault {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 6px;
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.polis-vault:hover {
+	background: var(--background-modifier-hover);
+}
+
+.polis-vault-icon {
+	display: flex;
+	color: var(--text-muted);
+}
+
+.polis-vault-info {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+}
+
+.polis-vault-name {
+	font-size: 0.9em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.polis-vault-desc {
+	font-size: 0.75em;
+	color: var(--text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}

@@ -1,0 +1,16 @@
+# npm
+node_modules/
+
+# build output (генерируется esbuild, в репозиторий не кладём)
+main.js
+*.js.map
+
+# system
+.DS_Store
+
+# editors
+.vscode/*
+!.vscode/extensions.json
+
+# data
+data.json

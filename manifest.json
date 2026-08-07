@@ -1,0 +1,10 @@
+{
+	"id": "polis",
+	"name": "Polis",
+	"version": "0.1.0",
+	"minAppVersion": "1.4.0",
+	"description": "Группируй свои vault'ы по контекстам и переключайся между ними в один клик.",
+	"author": "Your Name",
+	"authorUrl": "",
+	"isDesktopOnly": true
+}
