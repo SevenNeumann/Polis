@@ -13,10 +13,14 @@
 	"license": "MIT",
 	"devDependencies": {
 		"@types/node": "^20.11.0",
+		"@types/sortablejs": "^1.15.9",
 		"builtin-modules": "^3.3.0",
 		"esbuild": "^0.19.11",
 		"obsidian": "latest",
 		"tslib": "2.6.2",
 		"typescript": "5.3.3"
+	},
+	"dependencies": {
+		"sortablejs": "^1.15.7"
 	}
 }

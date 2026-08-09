@@ -1,32 +1,79 @@
 .polis-view {
-	padding: 8px 12px;
+	position: relative;
 }
 
-.polis-header {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	margin-bottom: 8px;
+/* Obsidian sets data-type on .workspace-leaf-content from the plugin's
+   getViewType() value — we use that instead of relying on an internal
+   class, so padding can also be overridden via personal CSS snippets. */
+[data-type="polis-view"] .view-content {
+	padding: 0;
 }
 
-.polis-title {
-	font-weight: 600;
-	font-size: 0.9em;
-	text-transform: uppercase;
-	color: var(--text-muted);
+.polis-groups-container {
+	padding: var(--size-4-1) var(--size-4-3) var(--size-4-6) var(--size-4-3);
 }
 
-.polis-icon-btn {
-	background: none;
-	border: none;
-	box-shadow: none;
+/* Polis modals must always sit above the edit-mode dimming strips */
+.polis-modal-container {
+	z-index: 100000 !important;
+}
+
+/* ---- dimming around the Polis panel in edit mode ----
+   4 separate rectangles around the panel's real coordinates —
+   the panel itself is never covered, so z-index doesn't matter. */
+
+.polis-global-dim-piece {
+	position: fixed;
+	background: rgba(0, 0, 0, 0.55);
+	z-index: 60;
 	cursor: pointer;
-	padding: 2px;
-	color: var(--text-muted);
 }
 
-.polis-icon-btn:hover {
-	color: var(--text-normal);
+/* ---- SortableJS: drag physics ----
+   ghost — placeholder silhouette at the spot the item will land on drop;
+   chosen — the item right after it's "picked up" (not moving yet);
+   drag — the floating clone that follows the cursor. */
+
+.polis-sortable-ghost {
+	opacity: 0.35;
+	background: var(--background-modifier-hover);
+	border-radius: 4px;
+}
+
+.polis-sortable-ghost .polis-vault-name,
+.polis-sortable-ghost .polis-group-name {
+	opacity: 0;
+}
+
+.polis-sortable-chosen {
+	background: var(--background-modifier-hover);
+	border-radius: 4px;
+}
+
+.polis-sortable-drag {
+	opacity: 0.95;
+	box-shadow: var(--shadow-l);
+	border-radius: 4px;
+	background: var(--background-primary);
+}
+
+/* grab cursor lives on the grip handle itself, not the whole row */
+.polis-group,
+.polis-vault-row {
+	touch-action: manipulation;
+}
+
+/* ---- header ----
+   Uses Obsidian's native classes (nav-buttons-container / nav-action-button),
+   so alignment, gap and the resting look of buttons are inherited from the
+   theme — custom CSS is only needed for active/disabled state. */
+
+.polis-view .nav-buttons-container {
+	padding: var(--size-4-2);
+}
+
+.polis-icon-btn-active {
+	color: var(--interactive-accent);
 }
 
 .polis-empty {
@@ -35,76 +82,217 @@
 	padding: 12px 4px;
 }
 
+/* ---- group ---- */
+
 .polis-group {
 	margin-bottom: 14px;
-	border: 1px solid var(--background-modifier-border);
+	position: relative;
+	z-index: 1;
+}
+
+.polis-edit-mode .polis-group {
 	border-radius: 6px;
-	padding: 6px 8px;
+	padding: 2px 4px;
 }
 
 .polis-group-header {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
+	gap: 6px;
+	padding: 2px 5px !important;
+	border-radius: 4px;
+}
+
+.polis-edit-mode .polis-group-header {
+	cursor: pointer;
+}
+
+.polis-edit-mode .polis-group-header:hover {
+	background: var(--background-modifier-hover);
+}
+
+.collapse-icon,
+.polis-info-btn {
+	cursor: pointer;
+	color: var(--nav-collapse-icon-color);
+	display: flex;
+	align-items: center;
+}
+
+.collapse-icon svg {
+	transition: transform 100ms ease-in-out;
+}
+
+.collapse-icon.is-collapsed svg {
+	transform: rotate(-90deg);
+}
+
+.polis-info-btn:hover {
+	color: var(--icon-color-hover);
+}
+
+.polis-group-icon {
+	display: flex;
+	color: var(--icon-color);
 }
 
 .polis-group-name {
 	font-weight: 600;
+	font-size: 1.02em;
+	color: var(--nav-item-color);
+	flex: 1;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
-.polis-group-actions {
+.polis-grip {
 	display: flex;
-	gap: 4px;
+	color: var(--icon-color);
+	cursor: grab;
+	opacity: 0.6;
 }
 
-.polis-group-desc {
-	font-size: 0.8em;
-	color: var(--text-muted);
-	margin: 2px 0 6px;
+.polis-grip:active {
+	cursor: grabbing;
 }
+
+.polis-edit-mode .polis-group-name,
+.polis-edit-mode .polis-vault-name {
+	opacity: 0.75;
+}
+
+/* ---- vault list: a real tree connector (like `tree` in cmd) ---- */
 
 .polis-vault-list {
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
+	margin-left: 10px;
+}
+
+.polis-vault-row {
+	display: flex;
+	align-items: stretch;
+}
+
+.polis-tree-connector {
+	position: relative;
+	width: 18px;
+	flex-shrink: 0;
+}
+
+/* vertical "trunk" — same width/color variable as the indentation guide in File explorer */
+.polis-tree-trunk {
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	border-inline-start: var(--nav-indentation-guide-width) solid var(--nav-indentation-guide-color);
+}
+
+.polis-vault-row-last .polis-tree-trunk {
+	bottom: 50%;
+}
+
+/* horizontal "branch" from the trunk to the dot — shortened by the dot's
+   radius so the two semi-transparent layers don't overlap (overlapping
+   translucent layers produces a visible seam / darker patch). */
+.polis-tree-branch {
+	position: absolute;
+	left: 0;
+	top: 50%;
+	width: 8px;
+	height: 1px;
+	background: var(--nav-indentation-guide-color);
+}
+
+/* filled dot sitting flush against the end of the branch, no overlap */
+.polis-tree-connector::after {
+	content: "";
+	position: absolute;
+	left: 10px;
+	top: 50%;
+	width: 4px;
+	height: 4px;
+	border-radius: 50%;
+	background: var(--nav-indentation-guide-color);
+	transform: translate(-50%, -50%);
 }
 
 .polis-vault {
 	display: flex;
 	align-items: center;
-	gap: 6px;
-	padding: 4px 6px;
+	gap: 8px;
+	padding: 4px 5px 4px 6px;
 	border-radius: 4px;
 	cursor: pointer;
+	flex: 1;
+	min-width: 0;
 }
 
 .polis-vault:hover {
 	background: var(--background-modifier-hover);
 }
 
-.polis-vault-icon {
-	display: flex;
-	color: var(--text-muted);
-}
-
-.polis-vault-info {
-	display: flex;
-	flex-direction: column;
-	flex: 1;
-	min-width: 0;
-}
-
 .polis-vault-name {
-	font-size: 0.9em;
+	font-size: 0.92em;
+	color: var(--nav-item-color);
+	flex: 1;
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
 
-.polis-vault-desc {
-	font-size: 0.75em;
+/* ---- modals: icon and color pickers ---- */
+
+.polis-icon-grid {
+	display: grid;
+	grid-template-columns: repeat(8, 1fr);
+	gap: 4px;
+	margin-bottom: 8px;
+}
+
+.polis-icon-grid-btn {
+	background: none;
+	border: 1px solid transparent;
+	box-shadow: none;
+	cursor: pointer;
+	padding: 6px;
+	border-radius: 4px;
 	color: var(--text-muted);
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.polis-icon-grid-btn:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.polis-icon-selected {
+	border-color: var(--interactive-accent);
+	color: var(--interactive-accent);
+}
+
+/* ---- group description modal (the "i" icon) ---- */
+
+.polis-info-heading {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.polis-info-heading h3 {
+	margin: 0;
+}
+
+.polis-info-desc {
+	white-space: pre-wrap;
+	color: var(--text-normal);
+}
+
+.polis-info-empty {
+	color: var(--text-muted);
+	font-style: italic;
 }
