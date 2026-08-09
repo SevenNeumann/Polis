@@ -2,6 +2,10 @@
 
 A vault manager for Obsidian. Group your vaults into contexts, jump between them in one click, and keep everything organized — right next to Files, Search, and Bookmarks.
 
+## Why "Polis"
+
+*Polis* (πόλις) was the ancient Greek city-state — a self-governing community with its own identity, holding together everything that belonged to it. That's the idea behind the plugin: each **group** is its own small polis, a self-contained context gathering the vaults that belong together, while still being part of the larger whole.
+
 ## Features
 
 - **Groups (contexts)** — organize vaults into named groups, each with its own icon, color, and description (e.g. "Work", "Personal", "Writing").
@@ -68,6 +72,10 @@ manifest.json   — plugin metadata
 - [ ] Community Plugins directory submission
 - [ ] Additional languages
 - [ ] Broader icon picker
+
+## Author
+
+Made by [Mark](https://github.com/SevenNeumann).
 
 ## License
 
