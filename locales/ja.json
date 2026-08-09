@@ -50,6 +50,11 @@
 	"vault.nameRequired": "Vault 名を入力してください",
 	"vault.nameRequiredShort": "名前を入力してください",
 	"vault.pathRequired": "Vault のパスが必要です",
+	"vault.obsidianNameLabel": "Obsidian 上の Vault 名",
+	"vault.obsidianNameDesc": "この端末ですでに開いたことがある、正確な Vault 名です。Polis は Obsidian 自体の Vault 切り替え機能を使って開きます",
+	"vault.obsidianNamePlaceholder": "例: My Vault",
+	"vault.obsidianNameRequired": "Vault 名が必要です",
+	"vault.noOpenTarget": "この Vault にはパスも名前も設定されていません。編集して追加してください",
 
 	"settings.title": "Polis",
 	"settings.language.name": "言語",

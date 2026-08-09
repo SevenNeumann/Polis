@@ -3,6 +3,7 @@ import {
 	ItemView,
 	Modal,
 	Notice,
+	Platform,
 	Plugin,
 	PluginSettingTab,
 	Setting,
@@ -11,9 +12,6 @@ import {
 } from "obsidian";
 import Sortable from "sortablejs";
 import { PolisLanguageSetting, setActiveLocale, t } from "./i18n";
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
 
 export const VIEW_TYPE_POLIS = "polis-view";
 
@@ -31,9 +29,21 @@ const DEFAULT_GROUP_ICON = "scan";
 /** A vault within a group */
 export interface PolisVault {
 	id: string;
+	/** display name shown in the Polis panel */
 	name: string;
-	/** absolute path to the vault folder on disk */
-	path: string;
+	/**
+	 * Absolute path to the vault folder on disk. Used to open the vault via
+	 * `obsidian://open?path=...`. Not available/meaningful on mobile, where
+	 * plugins have no access to a filesystem path for vaults.
+	 */
+	path?: string;
+	/**
+	 * The vault's name as registered in Obsidian itself. Used to open the
+	 * vault via `obsidian://open?vault=...`, which works on every platform
+	 * (including mobile) as long as the vault has been opened on this
+	 * device before — Obsidian resolves the name locally, no path needed.
+	 */
+	obsidianVaultName?: string;
 }
 
 /** A group (context) that bundles together several vaults */
@@ -67,33 +77,65 @@ interface KnownVault {
 	name: string;
 }
 
-function getObsidianConfigPath(): string | null {
-	const home = os.homedir();
-	switch (process.platform) {
-		case "win32": {
-			const appData = process.env.APPDATA;
-			return appData ? path.join(appData, "obsidian", "obsidian.json") : null;
-		}
-		case "darwin":
-			return path.join(home, "Library", "Application Support", "obsidian", "obsidian.json");
-		default:
-			return path.join(home, ".config", "obsidian", "obsidian.json");
+/**
+ * Node.js's fs/os/path modules don't exist on mobile Obsidian at all. We
+ * intentionally avoid a static `import ... from "fs"` (which would pull the
+ * module into the bundle unconditionally) and instead require it lazily,
+ * only on desktop, so the plugin loads cleanly on iOS/Android.
+ */
+function getNodeModules(): { fs: typeof import("fs"); os: typeof import("os"); path: typeof import("path") } | null {
+	if (!Platform.isDesktopApp) return null;
+	try {
+		// eslint-disable-next-line @typescript-eslint/no-var-requires
+		return {
+			fs: require("fs"),
+			os: require("os"),
+			path: require("path"),
+		};
+	} catch {
+		return null;
 	}
 }
 
+function getObsidianConfigPath(): string | null {
+	const node = getNodeModules();
+	if (!node) return null;
+
+	const home = node.os.homedir();
+	switch (process.platform) {
+		case "win32": {
+			const appData = process.env.APPDATA;
+			return appData ? node.path.join(appData, "obsidian", "obsidian.json") : null;
+		}
+		case "darwin":
+			return node.path.join(home, "Library", "Application Support", "obsidian", "obsidian.json");
+		default:
+			return node.path.join(home, ".config", "obsidian", "obsidian.json");
+	}
+}
+
+/**
+ * Lists vaults Obsidian already knows about, for the "pick an existing vault"
+ * dropdown when adding a vault. Desktop-only: mobile Obsidian has no such
+ * global vault registry on disk, so this simply returns an empty list there
+ * and the "add manually" path is used instead.
+ */
 function getKnownVaults(): KnownVault[] {
+	const node = getNodeModules();
+	if (!node) return [];
+
 	try {
 		const configPath = getObsidianConfigPath();
-		if (!configPath || !fs.existsSync(configPath)) return [];
+		if (!configPath || !node.fs.existsSync(configPath)) return [];
 
-		const raw = fs.readFileSync(configPath, "utf-8");
+		const raw = node.fs.readFileSync(configPath, "utf-8");
 		const data = JSON.parse(raw) as { vaults?: Record<string, { path?: string }> };
 		const entries = Object.values(data.vaults ?? {});
 
 		return entries
 			.map((v) => v.path)
-			.filter((p): p is string => !!p && fs.existsSync(p))
-			.map((p) => ({ path: p, name: path.basename(p) }))
+			.filter((p): p is string => !!p && node.fs.existsSync(p))
+			.map((p) => ({ path: p, name: node.path.basename(p) }))
 			.sort((a, b) => a.name.localeCompare(b.name));
 	} catch (e) {
 		console.error("Polis: failed to read obsidian.json", e);
@@ -194,10 +236,10 @@ export default class PolisPlugin extends Plugin {
 
 	// ---- vaults ----
 
-	addVault(groupId: string, name: string, vaultPath: string) {
+	addVault(groupId: string, name: string, location: { path?: string; obsidianVaultName?: string }) {
 		const group = this.settings.groups.find((g) => g.id === groupId);
 		if (!group) return;
-		group.vaults.push({ id: makeId(), name, path: vaultPath });
+		group.vaults.push({ id: makeId(), name, ...location });
 		this.saveSettings();
 	}
 
@@ -232,7 +274,15 @@ export default class PolisPlugin extends Plugin {
 	}
 
 	openVault(vault: PolisVault) {
-		const uri = `obsidian://open?path=${encodeURIComponent(vault.path)}`;
+		let uri: string;
+		if (vault.obsidianVaultName) {
+			uri = `obsidian://open?vault=${encodeURIComponent(vault.obsidianVaultName)}`;
+		} else if (vault.path) {
+			uri = `obsidian://open?path=${encodeURIComponent(vault.path)}`;
+		} else {
+			new Notice(t("vault.noOpenTarget"));
+			return;
+		}
 		window.open(uri);
 	}
 
@@ -551,12 +601,16 @@ class PolisView extends ItemView {
 					this.plugin.settings.groups,
 					group.id,
 					vault,
-					(targetGroupId, name, vaultPath) => {
+					(targetGroupId, name, location) => {
 						if (targetGroupId !== group.id) {
 							const toGroup = this.plugin.settings.groups.find((g) => g.id === targetGroupId);
 							this.plugin.moveVault(vault.id, group.id, targetGroupId, toGroup?.vaults.length ?? 0);
 						}
-						this.plugin.updateVault(targetGroupId, vault.id, { name, path: vaultPath });
+						this.plugin.updateVault(targetGroupId, vault.id, {
+							name,
+							path: location.path,
+							obsidianVaultName: location.obsidianVaultName,
+						});
 					},
 					() => this.plugin.removeVault(group.id, vault.id)
 				).open();
@@ -846,13 +900,14 @@ class AddVaultModal extends PolisModal {
 	private groupId: string;
 	private name = "";
 	private path = "";
+	private obsidianVaultName = "";
 	private nameInputEl!: HTMLInputElement;
 	private pathInputEl!: HTMLInputElement;
 
 	constructor(
 		app: App,
 		private groups: PolisGroup[],
-		private onSubmit: (groupId: string, name: string, path: string) => void
+		private onSubmit: (groupId: string, name: string, location: { path?: string; obsidianVaultName?: string }) => void
 	) {
 		super(app);
 		this.groupId = groups[0]?.id ?? "";
@@ -869,23 +924,25 @@ class AddVaultModal extends PolisModal {
 			});
 		});
 
-		const known = getKnownVaults();
-		if (known.length > 0) {
-			new Setting(contentEl)
-				.setName(t("vault.knownLabel"))
-				.setDesc(t("vault.knownDesc"))
-				.addDropdown((dropdown) => {
-					dropdown.addOption("", t("vault.knownManual"));
-					known.forEach((v, i) => dropdown.addOption(String(i), `${v.name}  (${v.path})`));
-					dropdown.onChange((value) => {
-						if (value === "") return;
-						const vault = known[Number(value)];
-						this.name = vault.name;
-						this.path = vault.path;
-						this.nameInputEl.value = vault.name;
-						this.pathInputEl.value = vault.path;
+		if (Platform.isDesktopApp) {
+			const known = getKnownVaults();
+			if (known.length > 0) {
+				new Setting(contentEl)
+					.setName(t("vault.knownLabel"))
+					.setDesc(t("vault.knownDesc"))
+					.addDropdown((dropdown) => {
+						dropdown.addOption("", t("vault.knownManual"));
+						known.forEach((v, i) => dropdown.addOption(String(i), `${v.name}  (${v.path})`));
+						dropdown.onChange((value) => {
+							if (value === "") return;
+							const vault = known[Number(value)];
+							this.name = vault.name;
+							this.path = vault.path;
+							this.nameInputEl.value = vault.name;
+							this.pathInputEl.value = vault.path;
+						});
 					});
-				});
+			}
 		}
 
 		new Setting(contentEl).setName(t("vault.nameLabel")).addText((text) => {
@@ -895,15 +952,26 @@ class AddVaultModal extends PolisModal {
 			});
 		});
 
-		new Setting(contentEl)
-			.setName(t("vault.pathLabel"))
-			.setDesc(t("vault.pathDesc"))
-			.addText((text) => {
-				this.pathInputEl = text.inputEl;
-				text.setPlaceholder(t("vault.pathPlaceholder")).onChange((value) => {
-					this.path = value;
+		if (Platform.isDesktopApp) {
+			new Setting(contentEl)
+				.setName(t("vault.pathLabel"))
+				.setDesc(t("vault.pathDesc"))
+				.addText((text) => {
+					this.pathInputEl = text.inputEl;
+					text.setPlaceholder(t("vault.pathPlaceholder")).onChange((value) => {
+						this.path = value;
+					});
 				});
-			});
+		} else {
+			new Setting(contentEl)
+				.setName(t("vault.obsidianNameLabel"))
+				.setDesc(t("vault.obsidianNameDesc"))
+				.addText((text) => {
+					text.setPlaceholder(t("vault.obsidianNamePlaceholder")).onChange((value) => {
+						this.obsidianVaultName = value;
+					});
+				});
+		}
 
 		new Setting(contentEl).addButton((btn) =>
 			btn
@@ -916,6 +984,8 @@ class AddVaultModal extends PolisModal {
 	private submit() {
 		const name = this.name.trim();
 		const vaultPath = this.path.trim();
+		const obsidianVaultName = this.obsidianVaultName.trim();
+
 		if (!this.groupId) {
 			new Notice(t("vault.groupRequired"));
 			return;
@@ -924,11 +994,19 @@ class AddVaultModal extends PolisModal {
 			new Notice(t("vault.nameRequired"));
 			return;
 		}
-		if (!vaultPath) {
-			new Notice(t("vault.pathRequired"));
-			return;
+		if (Platform.isDesktopApp) {
+			if (!vaultPath) {
+				new Notice(t("vault.pathRequired"));
+				return;
+			}
+			this.onSubmit(this.groupId, name, { path: vaultPath });
+		} else {
+			if (!obsidianVaultName) {
+				new Notice(t("vault.obsidianNameRequired"));
+				return;
+			}
+			this.onSubmit(this.groupId, name, { obsidianVaultName });
 		}
-		this.onSubmit(this.groupId, name, vaultPath);
 		this.close();
 	}
 
@@ -945,6 +1023,7 @@ class EditVaultModal extends PolisModal {
 	private groupId: string;
 	private name: string;
 	private path: string;
+	private obsidianVaultName: string;
 	private confirmingDelete = false;
 
 	constructor(
@@ -952,13 +1031,14 @@ class EditVaultModal extends PolisModal {
 		private groups: PolisGroup[],
 		currentGroupId: string,
 		private vault: PolisVault,
-		private onSave: (groupId: string, name: string, path: string) => void,
+		private onSave: (groupId: string, name: string, location: { path?: string; obsidianVaultName?: string }) => void,
 		private onDelete: () => void
 	) {
 		super(app);
 		this.groupId = currentGroupId;
 		this.name = vault.name;
-		this.path = vault.path;
+		this.path = vault.path ?? "";
+		this.obsidianVaultName = vault.obsidianVaultName ?? "";
 	}
 
 	onOpen() {
@@ -979,11 +1059,22 @@ class EditVaultModal extends PolisModal {
 			text.inputEl.focus();
 		});
 
-		new Setting(contentEl).setName(t("vault.pathLabel")).addText((text) => {
-			text.setValue(this.path).onChange((value) => {
-				this.path = value;
+		if (Platform.isDesktopApp) {
+			new Setting(contentEl).setName(t("vault.pathLabel")).addText((text) => {
+				text.setValue(this.path).onChange((value) => {
+					this.path = value;
+				});
 			});
-		});
+		} else {
+			new Setting(contentEl)
+				.setName(t("vault.obsidianNameLabel"))
+				.setDesc(t("vault.obsidianNameDesc"))
+				.addText((text) => {
+					text.setValue(this.obsidianVaultName).onChange((value) => {
+						this.obsidianVaultName = value;
+					});
+				});
+		}
 
 		const footer = new Setting(contentEl);
 		footer.addButton((btn) =>
@@ -1016,15 +1107,25 @@ class EditVaultModal extends PolisModal {
 	private submit() {
 		const name = this.name.trim();
 		const vaultPath = this.path.trim();
+		const obsidianVaultName = this.obsidianVaultName.trim();
+
 		if (!name) {
 			new Notice(t("vault.nameRequiredShort"));
 			return;
 		}
-		if (!vaultPath) {
-			new Notice(t("vault.pathRequired"));
-			return;
+		if (Platform.isDesktopApp) {
+			if (!vaultPath) {
+				new Notice(t("vault.pathRequired"));
+				return;
+			}
+			this.onSave(this.groupId, name, { path: vaultPath, obsidianVaultName: undefined });
+		} else {
+			if (!obsidianVaultName) {
+				new Notice(t("vault.obsidianNameRequired"));
+				return;
+			}
+			this.onSave(this.groupId, name, { path: undefined, obsidianVaultName });
 		}
-		this.onSave(this.groupId, name, vaultPath);
 		this.close();
 	}
 

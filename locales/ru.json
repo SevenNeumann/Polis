@@ -50,6 +50,11 @@
 	"vault.nameRequired": "Название хранилища не может быть пустым",
 	"vault.nameRequiredShort": "Название не может быть пустым",
 	"vault.pathRequired": "Нужен путь к хранилищу",
+	"vault.obsidianNameLabel": "Имя хранилища в Obsidian",
+	"vault.obsidianNameDesc": "Точное имя, под которым это хранилище уже открывалось на этом устройстве — Polis откроет его через встроенный переключатель Obsidian",
+	"vault.obsidianNamePlaceholder": "например, My Vault",
+	"vault.obsidianNameRequired": "Нужно имя хранилища",
+	"vault.noOpenTarget": "У этого хранилища не задан ни путь, ни имя — отредактируй его, чтобы добавить",
 
 	"settings.title": "Polis",
 	"settings.language.name": "Язык",

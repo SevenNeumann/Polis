@@ -50,6 +50,11 @@
 	"vault.nameRequired": "Vault name can't be empty",
 	"vault.nameRequiredShort": "Name can't be empty",
 	"vault.pathRequired": "Vault path is required",
+	"vault.obsidianNameLabel": "Vault name in Obsidian",
+	"vault.obsidianNameDesc": "The exact name this vault has already been opened under on this device — Polis will open it via Obsidian's own vault switcher",
+	"vault.obsidianNamePlaceholder": "e.g. My Vault",
+	"vault.obsidianNameRequired": "Vault name is required",
+	"vault.noOpenTarget": "This vault has no path or name set — edit it to add one",
 
 	"settings.title": "Polis",
 	"settings.language.name": "Language",
