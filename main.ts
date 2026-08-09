@@ -4,11 +4,13 @@ import {
 	Modal,
 	Notice,
 	Plugin,
+	PluginSettingTab,
 	Setting,
 	WorkspaceLeaf,
 	setIcon,
 } from "obsidian";
 import Sortable from "sortablejs";
+import { PolisLanguageSetting, setActiveLocale, t } from "./i18n";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -47,10 +49,12 @@ export interface PolisGroup {
 
 export interface PolisSettings {
 	groups: PolisGroup[];
+	language: PolisLanguageSetting;
 }
 
 export const DEFAULT_SETTINGS: PolisSettings = {
 	groups: [],
+	language: "auto",
 };
 
 function makeId(): string {
@@ -92,7 +96,7 @@ function getKnownVaults(): KnownVault[] {
 			.map((p) => ({ path: p, name: path.basename(p) }))
 			.sort((a, b) => a.name.localeCompare(b.name));
 	} catch (e) {
-		console.error("Polis: не удалось прочитать obsidian.json", e);
+		console.error("Polis: failed to read obsidian.json", e);
 		return [];
 	}
 }
@@ -102,12 +106,15 @@ export default class PolisPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		setActiveLocale(this.settings.language);
+
 		this.registerView(VIEW_TYPE_POLIS, (leaf) => new PolisView(leaf, this));
+		this.addSettingTab(new PolisSettingTab(this.app, this));
 
 		this.addRibbonIcon("landmark", "Polis", () => this.activateView());
 		this.addCommand({
 			id: "open-polis-view",
-			name: "Открыть Polis",
+			name: t("command.openPolis"),
 			callback: () => this.activateView(),
 		});
 	}
@@ -228,6 +235,64 @@ export default class PolisPlugin extends Plugin {
 		const uri = `obsidian://open?path=${encodeURIComponent(vault.path)}`;
 		window.open(uri);
 	}
+
+	// ---- language ----
+
+	async setLanguage(language: PolisLanguageSetting) {
+		this.settings.language = language;
+		setActiveLocale(language);
+		await this.saveSettings();
+		// full re-render is needed since a language switch changes strings
+		// everywhere, not just data — saveSettings() already re-renders open views
+	}
+
+	// ---- import / export ----
+
+	/** Serializes all groups (and their nested vaults) into a portable JSON payload */
+	exportData(): string {
+		const payload = {
+			polisExportVersion: 1,
+			exportedAt: new Date().toISOString(),
+			groups: this.settings.groups,
+		};
+		return JSON.stringify(payload, null, 2);
+	}
+
+	/**
+	 * Merges an imported list of groups into current settings using one of
+	 * three strategies. Matching is done by group id, since ids are stable
+	 * identifiers generated once per group and preserved across export/import.
+	 */
+	importGroups(
+		imported: PolisGroup[],
+		strategy: "replace" | "merge-overwrite" | "merge-keep"
+	): { added: number; overwritten: number; skipped: number } {
+		if (strategy === "replace") {
+			this.settings.groups = imported;
+			this.saveSettings();
+			return { added: imported.length, overwritten: 0, skipped: 0 };
+		}
+
+		let added = 0;
+		let overwritten = 0;
+		let skipped = 0;
+
+		for (const incoming of imported) {
+			const existingIndex = this.settings.groups.findIndex((g) => g.id === incoming.id);
+			if (existingIndex === -1) {
+				this.settings.groups.push(incoming);
+				added++;
+			} else if (strategy === "merge-overwrite") {
+				this.settings.groups[existingIndex] = incoming;
+				overwritten++;
+			} else {
+				skipped++;
+			}
+		}
+
+		this.saveSettings();
+		return { added, overwritten, skipped };
+	}
 }
 
 class PolisView extends ItemView {
@@ -270,7 +335,7 @@ class PolisView extends ItemView {
 		if (groups.length === 0) {
 			container.createDiv({
 				cls: "polis-empty",
-				text: "Пока нет групп. Нажми на иконку скобок, чтобы создать первую.",
+				text: t("empty.noGroups"),
 			});
 			return;
 		}
@@ -361,7 +426,7 @@ class PolisView extends ItemView {
 
 		const addGroupBtn = header.createEl("button", { cls: "polis-icon-btn nav-action-button clickable-icon" });
 		setIcon(addGroupBtn, "scan");
-		addGroupBtn.setAttr("aria-label", "Создать группу");
+		addGroupBtn.setAttr("aria-label", t("aria.createGroup"));
 		addGroupBtn.onclick = () => {
 			new EditGroupModal(this.app, null, (data) => {
 				this.plugin.addGroup(data.name, data.description, data.icon, data.color);
@@ -370,7 +435,7 @@ class PolisView extends ItemView {
 
 		const addVaultBtn = header.createEl("button", { cls: "polis-icon-btn nav-action-button clickable-icon" });
 		setIcon(addVaultBtn, "vault");
-		addVaultBtn.setAttr("aria-label", "Добавить хранилище");
+		addVaultBtn.setAttr("aria-label", t("aria.addVault"));
 		const hasGroups = this.plugin.settings.groups.length > 0;
 		addVaultBtn.disabled = !hasGroups;
 		if (!hasGroups) addVaultBtn.setAttr("aria-disabled", "true");
@@ -383,7 +448,7 @@ class PolisView extends ItemView {
 
 		const editBtn = header.createEl("button", { cls: "polis-icon-btn nav-action-button clickable-icon" });
 		setIcon(editBtn, "square-pen");
-		editBtn.setAttr("aria-label", "Режим редактирования");
+		editBtn.setAttr("aria-label", t("aria.editMode"));
 		editBtn.toggleClass("polis-icon-btn-active", this.editMode);
 		editBtn.onclick = () => {
 			this.editMode = !this.editMode;
@@ -400,7 +465,7 @@ class PolisView extends ItemView {
 		const chevron = groupHeader.createDiv({ cls: "tree-item-icon collapse-icon" });
 		chevron.toggleClass("is-collapsed", !!group.collapsed);
 		setIcon(chevron, "right-triangle");
-		chevron.setAttr("aria-label", group.collapsed ? "Развернуть" : "Свернуть");
+		chevron.setAttr("aria-label", group.collapsed ? t("aria.expand") : t("aria.collapse"));
 		chevron.onclick = (e) => {
 			e.stopPropagation();
 			this.plugin.toggleGroupCollapsed(group.id);
@@ -415,7 +480,7 @@ class PolisView extends ItemView {
 		if (!this.editMode) {
 			const infoBtn = groupHeader.createEl("button", { cls: "polis-info-btn clickable-icon" });
 			setIcon(infoBtn, "info");
-			infoBtn.setAttr("aria-label", "Описание группы");
+			infoBtn.setAttr("aria-label", t("aria.groupDescription"));
 			infoBtn.onclick = (e) => {
 				e.stopPropagation();
 				new GroupInfoModal(this.app, group).open();
@@ -563,7 +628,7 @@ function buildIconPicker(
 ) {
 	let selected = initial || DEFAULT_GROUP_ICON;
 
-	new Setting(contentEl).setName("Иконка").setHeading();
+	new Setting(contentEl).setName(t("icon.heading")).setHeading();
 
 	const grid = contentEl.createDiv({ cls: "polis-icon-grid" });
 	const buttons: HTMLElement[] = [];
@@ -588,11 +653,11 @@ function buildIconPicker(
 
 	let customInput: HTMLInputElement;
 	new Setting(contentEl)
-		.setName("Своя иконка")
-		.setDesc("Точное имя lucide-иконки, если нужной нет в сетке выше")
+		.setName(t("icon.customLabel"))
+		.setDesc(t("icon.customDesc"))
 		.addText((text) => {
 			customInput = text.inputEl;
-			text.setPlaceholder("например, anchor").onChange((value) => {
+			text.setPlaceholder(t("icon.customPlaceholder")).onChange((value) => {
 				if (!value.trim()) return;
 				selected = value.trim();
 				onChange(selected);
@@ -607,15 +672,15 @@ function buildColorPicker(
 	onChange: (color: string | undefined) => void
 ) {
 	new Setting(contentEl)
-		.setName("Цвет")
-		.setDesc("Необязательно")
+		.setName(t("color.label"))
+		.setDesc(t("color.desc"))
 		.addColorPicker((picker) => {
 			picker.setValue(initial || "#7c7c7c").onChange((value) => onChange(value));
 		})
 		.addExtraButton((btn) =>
 			btn
 				.setIcon("rotate-ccw")
-				.setTooltip("Сбросить цвет")
+				.setTooltip(t("color.reset"))
 				.onClick(() => onChange(undefined))
 		);
 }
@@ -664,9 +729,9 @@ class EditGroupModal extends PolisModal {
 
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.createEl("h3", { text: this.existing ? "Редактировать группу" : "Новая группа" });
+		contentEl.createEl("h3", { text: this.existing ? t("group.editTitle") : t("group.newTitle") });
 
-		new Setting(contentEl).setName("Название").addText((text) => {
+		new Setting(contentEl).setName(t("group.nameLabel")).addText((text) => {
 			text.setValue(this.data.name).onChange((value) => {
 				this.data.name = value;
 			});
@@ -682,8 +747,8 @@ class EditGroupModal extends PolisModal {
 		});
 
 		new Setting(contentEl)
-			.setName("Описание")
-			.setDesc("Зачем нужна эта группа, что в ней лежит")
+			.setName(t("group.descLabel"))
+			.setDesc(t("group.descDesc"))
 			.addTextArea((text) => {
 				text.setValue(this.data.description ?? "").onChange((value) => {
 					this.data.description = value;
@@ -695,15 +760,15 @@ class EditGroupModal extends PolisModal {
 		if (this.existing && this.onDelete) {
 			footer.addButton((btn) =>
 				btn
-					.setButtonText("Удалить группу")
+					.setButtonText(t("group.delete"))
 					.setWarning()
 					.onClick(() => {
 						if (!this.confirmingDelete) {
 							this.confirmingDelete = true;
-							btn.setButtonText("Точно удалить?");
+							btn.setButtonText(t("group.deleteConfirm"));
 							setTimeout(() => {
 								this.confirmingDelete = false;
-								btn.setButtonText("Удалить группу");
+								btn.setButtonText(t("group.delete"));
 							}, 3000);
 							return;
 						}
@@ -712,10 +777,10 @@ class EditGroupModal extends PolisModal {
 					})
 			);
 		}
-		footer.addButton((btn) => btn.setButtonText("Отмена").onClick(() => this.close()));
+		footer.addButton((btn) => btn.setButtonText(t("group.cancel")).onClick(() => this.close()));
 		footer.addButton((btn) =>
 			btn
-				.setButtonText("Сохранить")
+				.setButtonText(t("group.save"))
 				.setCta()
 				.onClick(() => this.submit())
 		);
@@ -724,7 +789,7 @@ class EditGroupModal extends PolisModal {
 	private submit() {
 		const name = this.data.name.trim();
 		if (!name) {
-			new Notice("Название группы не может быть пустым");
+			new Notice(t("group.nameRequired"));
 			return;
 		}
 		this.onSave({
@@ -762,7 +827,7 @@ class GroupInfoModal extends PolisModal {
 			contentEl.createEl("p", { text: this.group.description, cls: "polis-info-desc" });
 		} else {
 			contentEl.createEl("p", {
-				text: "Описание ещё не добавлено.",
+				text: t("group.noDescription"),
 				cls: "polis-info-desc polis-info-empty",
 			});
 		}
@@ -795,9 +860,9 @@ class AddVaultModal extends PolisModal {
 
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.createEl("h3", { text: "Добавить хранилище" });
+		contentEl.createEl("h3", { text: t("vault.addTitle") });
 
-		new Setting(contentEl).setName("Группа").addDropdown((dropdown) => {
+		new Setting(contentEl).setName(t("vault.groupLabel")).addDropdown((dropdown) => {
 			this.groups.forEach((g) => dropdown.addOption(g.id, g.name));
 			dropdown.setValue(this.groupId).onChange((value) => {
 				this.groupId = value;
@@ -807,10 +872,10 @@ class AddVaultModal extends PolisModal {
 		const known = getKnownVaults();
 		if (known.length > 0) {
 			new Setting(contentEl)
-				.setName("Уже открывался в Obsidian")
-				.setDesc("Выбери, чтобы подставить название и путь автоматически")
+				.setName(t("vault.knownLabel"))
+				.setDesc(t("vault.knownDesc"))
 				.addDropdown((dropdown) => {
-					dropdown.addOption("", "— указать вручную —");
+					dropdown.addOption("", t("vault.knownManual"));
 					known.forEach((v, i) => dropdown.addOption(String(i), `${v.name}  (${v.path})`));
 					dropdown.onChange((value) => {
 						if (value === "") return;
@@ -823,7 +888,7 @@ class AddVaultModal extends PolisModal {
 				});
 		}
 
-		new Setting(contentEl).setName("Название").addText((text) => {
+		new Setting(contentEl).setName(t("vault.nameLabel")).addText((text) => {
 			this.nameInputEl = text.inputEl;
 			text.onChange((value) => {
 				this.name = value;
@@ -831,18 +896,18 @@ class AddVaultModal extends PolisModal {
 		});
 
 		new Setting(contentEl)
-			.setName("Путь к vault'у")
-			.setDesc("Абсолютный путь к папке хранилища на диске")
+			.setName(t("vault.pathLabel"))
+			.setDesc(t("vault.pathDesc"))
 			.addText((text) => {
 				this.pathInputEl = text.inputEl;
-				text.setPlaceholder("D:\\Vault\\MyVault").onChange((value) => {
+				text.setPlaceholder(t("vault.pathPlaceholder")).onChange((value) => {
 					this.path = value;
 				});
 			});
 
 		new Setting(contentEl).addButton((btn) =>
 			btn
-				.setButtonText("Добавить")
+				.setButtonText(t("vault.add"))
 				.setCta()
 				.onClick(() => this.submit())
 		);
@@ -852,15 +917,15 @@ class AddVaultModal extends PolisModal {
 		const name = this.name.trim();
 		const vaultPath = this.path.trim();
 		if (!this.groupId) {
-			new Notice("Сначала выбери группу");
+			new Notice(t("vault.groupRequired"));
 			return;
 		}
 		if (!name) {
-			new Notice("Название хранилища не может быть пустым");
+			new Notice(t("vault.nameRequired"));
 			return;
 		}
 		if (!vaultPath) {
-			new Notice("Нужен путь к хранилищу");
+			new Notice(t("vault.pathRequired"));
 			return;
 		}
 		this.onSubmit(this.groupId, name, vaultPath);
@@ -898,23 +963,23 @@ class EditVaultModal extends PolisModal {
 
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.createEl("h3", { text: "Редактировать хранилище" });
+		contentEl.createEl("h3", { text: t("vault.editTitle") });
 
-		new Setting(contentEl).setName("Группа").addDropdown((dropdown) => {
+		new Setting(contentEl).setName(t("vault.groupLabel")).addDropdown((dropdown) => {
 			this.groups.forEach((g) => dropdown.addOption(g.id, g.name));
 			dropdown.setValue(this.groupId).onChange((value) => {
 				this.groupId = value;
 			});
 		});
 
-		new Setting(contentEl).setName("Название").addText((text) => {
+		new Setting(contentEl).setName(t("vault.nameLabel")).addText((text) => {
 			text.setValue(this.name).onChange((value) => {
 				this.name = value;
 			});
 			text.inputEl.focus();
 		});
 
-		new Setting(contentEl).setName("Путь к vault'у").addText((text) => {
+		new Setting(contentEl).setName(t("vault.pathLabel")).addText((text) => {
 			text.setValue(this.path).onChange((value) => {
 				this.path = value;
 			});
@@ -923,15 +988,15 @@ class EditVaultModal extends PolisModal {
 		const footer = new Setting(contentEl);
 		footer.addButton((btn) =>
 			btn
-				.setButtonText("Удалить хранилище")
+				.setButtonText(t("vault.delete"))
 				.setWarning()
 				.onClick(() => {
 					if (!this.confirmingDelete) {
 						this.confirmingDelete = true;
-						btn.setButtonText("Точно удалить?");
+						btn.setButtonText(t("vault.deleteConfirm"));
 						setTimeout(() => {
 							this.confirmingDelete = false;
-							btn.setButtonText("Удалить хранилище");
+							btn.setButtonText(t("vault.delete"));
 						}, 3000);
 						return;
 					}
@@ -939,10 +1004,10 @@ class EditVaultModal extends PolisModal {
 					this.close();
 				})
 		);
-		footer.addButton((btn) => btn.setButtonText("Отмена").onClick(() => this.close()));
+		footer.addButton((btn) => btn.setButtonText(t("vault.cancel")).onClick(() => this.close()));
 		footer.addButton((btn) =>
 			btn
-				.setButtonText("Сохранить")
+				.setButtonText(t("vault.save"))
 				.setCta()
 				.onClick(() => this.submit())
 		);
@@ -952,15 +1017,183 @@ class EditVaultModal extends PolisModal {
 		const name = this.name.trim();
 		const vaultPath = this.path.trim();
 		if (!name) {
-			new Notice("Название не может быть пустым");
+			new Notice(t("vault.nameRequiredShort"));
 			return;
 		}
 		if (!vaultPath) {
-			new Notice("Нужен путь к хранилищу");
+			new Notice(t("vault.pathRequired"));
 			return;
 		}
 		this.onSave(this.groupId, name, vaultPath);
 		this.close();
+	}
+
+	onClose() {
+		this.contentEl.empty();
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Plugin settings tab: language selection + data export/import
+// ---------------------------------------------------------------------------
+
+const LANGUAGE_OPTIONS: { value: PolisLanguageSetting; labelKey: string }[] = [
+	{ value: "auto", labelKey: "settings.language.auto" },
+	{ value: "en", labelKey: "settings.language.en" },
+	{ value: "ru", labelKey: "settings.language.ru" },
+	{ value: "ja", labelKey: "settings.language.ja" },
+];
+
+class PolisSettingTab extends PluginSettingTab {
+	constructor(app: App, private plugin: PolisPlugin) {
+		super(app, plugin);
+	}
+
+	display() {
+		const { containerEl } = this;
+		containerEl.empty();
+
+		new Setting(containerEl)
+			.setName(t("settings.language.name"))
+			.setDesc(t("settings.language.desc"))
+			.addDropdown((dropdown) => {
+				LANGUAGE_OPTIONS.forEach((opt) => dropdown.addOption(opt.value, t(opt.labelKey)));
+				dropdown.setValue(this.plugin.settings.language).onChange(async (value) => {
+					await this.plugin.setLanguage(value as PolisLanguageSetting);
+					// re-render the settings tab itself so its own labels update too
+					this.display();
+				});
+			});
+
+		new Setting(containerEl).setName(t("settings.data.heading")).setHeading();
+
+		new Setting(containerEl)
+			.setName(t("settings.export.name"))
+			.setDesc(t("settings.export.desc"))
+			.addButton((btn) =>
+				btn.setButtonText(t("settings.export.button")).onClick(() => this.handleExport())
+			);
+
+		new Setting(containerEl)
+			.setName(t("settings.import.name"))
+			.setDesc(t("settings.import.desc"))
+			.addButton((btn) =>
+				btn.setButtonText(t("settings.import.button")).onClick(() => this.handleImportClick())
+			);
+	}
+
+	private handleExport() {
+		const json = this.plugin.exportData();
+		const blob = new Blob([json], { type: "application/json" });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement("a");
+		const timestamp = new Date().toISOString().slice(0, 10);
+		link.href = url;
+		link.download = `polis-export-${timestamp}.json`;
+		link.click();
+		URL.revokeObjectURL(url);
+		new Notice(t("settings.export.success", { count: this.plugin.settings.groups.length }));
+	}
+
+	private handleImportClick() {
+		const input = document.createElement("input");
+		input.type = "file";
+		input.accept = "application/json,.json";
+		input.onchange = () => {
+			const file = input.files?.[0];
+			if (!file) return;
+
+			const reader = new FileReader();
+			reader.onload = () => {
+				this.processImportedText(String(reader.result));
+			};
+			reader.readAsText(file);
+		};
+		input.click();
+	}
+
+	private processImportedText(raw: string) {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(raw);
+		} catch {
+			new Notice(t("settings.import.parseError"));
+			return;
+		}
+
+		const groups = (parsed as { groups?: unknown })?.groups;
+		if (!Array.isArray(groups)) {
+			new Notice(t("settings.import.invalidFile"));
+			return;
+		}
+
+		new ImportStrategyModal(this.app, groups as PolisGroup[], this.plugin.settings.groups.length, (strategy) => {
+			const result = this.plugin.importGroups(groups as PolisGroup[], strategy);
+			if (strategy === "replace") {
+				new Notice(t("import.resultReplace", { count: groups.length }));
+			} else {
+				new Notice(
+					t("import.resultMerge", {
+						added: result.added,
+						overwritten: result.overwritten,
+						skipped: result.skipped,
+					})
+				);
+			}
+			this.display();
+		}).open();
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Import strategy modal — asks how to apply imported groups when the vault
+// already has data: replace everything, merge and overwrite id matches, or
+// merge while keeping existing groups untouched.
+// ---------------------------------------------------------------------------
+
+type ImportStrategy = "replace" | "merge-overwrite" | "merge-keep";
+
+class ImportStrategyModal extends PolisModal {
+	constructor(
+		app: App,
+		private imported: PolisGroup[],
+		private existingCount: number,
+		private onChoose: (strategy: ImportStrategy) => void
+	) {
+		super(app);
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.createEl("h3", { text: t("import.modalTitle", { count: this.imported.length }) });
+		contentEl.createEl("p", {
+			text: t("import.modalDesc", { existing: this.existingCount }),
+			cls: "polis-info-desc",
+		});
+
+		this.addChoice(contentEl, t("import.replaceAll"), t("import.replaceAllDesc"), "replace");
+		this.addChoice(
+			contentEl,
+			t("import.mergeOverwrite"),
+			t("import.mergeOverwriteDesc"),
+			"merge-overwrite"
+		);
+		this.addChoice(contentEl, t("import.mergeKeep"), t("import.mergeKeepDesc"), "merge-keep");
+	}
+
+	private addChoice(contentEl: HTMLElement, name: string, desc: string, strategy: ImportStrategy) {
+		new Setting(contentEl)
+			.setName(name)
+			.setDesc(desc)
+			.addButton((btn) =>
+				btn
+					.setButtonText(name)
+					.setCta()
+					.onClick(() => {
+						this.onChoose(strategy);
+						this.close();
+					})
+			);
 	}
 
 	onClose() {

@@ -1,48 +1,74 @@
 # Polis
 
-Плагин для Obsidian: группируй свои vault'ы по контекстам и переключайся между ними в один клик.
+A vault manager for Obsidian. Group your vaults into contexts, jump between them in one click, and keep everything organized — right next to Files, Search, and Bookmarks.
 
-## Статус
+## Features
 
-Ранний skeleton. Реализовано:
-- регистрация view во вкладке сайдбара (рядом с Files/Search/Bookmarks);
-- модель данных: группы → vault'ы, у каждого есть имя, путь, необязательное описание;
-- добавление/удаление групп и vault'ов (через `window.prompt`, временно — заменить на нормальные модалки);
-- открытие vault'а по клику через `obsidian://open?path=...`;
-- хранение данных в стандартном `data.json` плагина.
+- **Groups (contexts)** — organize vaults into named groups, each with its own icon, color, and description (e.g. "Work", "Personal", "Writing").
+- **One-click vault switching** — click any vault to open it via Obsidian's `obsidian://` URI handler.
+- **Drag-and-drop reordering** — smooth, physics-based reordering (powered by [SortableJS](https://github.com/SortableJS/Sortable)) for both groups and vaults, including moving a vault between groups.
+- **Edit mode** — a dedicated mode dims the rest of Obsidian and reveals drag handles and edit affordances, so browsing and editing stay visually distinct.
+- **Auto-detects known vaults** — when adding a vault, pick from vaults Obsidian already knows about (read from Obsidian's own vault list) instead of typing a path by hand.
+- **Import / export** — back up all groups and vaults to a JSON file, or move your setup between different Obsidian installations. Import supports three merge strategies: replace everything, merge and overwrite matching groups, or merge while keeping existing groups untouched.
+- **Localized UI** — English, Russian, and Japanese out of the box, with automatic detection based on Obsidian's own display language (or pick one manually in settings).
 
-Не реализовано (следующие шаги):
-- нормальные модальные окна вместо `window.prompt`;
-- отображение описания группы/vault'а (tooltip? отдельная панель? раскрывающийся блок?);
-- копирование самого плагина в новый vault при добавлении ("чтобы Polis был везде");
-- экспорт/импорт данных для ручной синхронизации между vault'ами;
-- settings tab.
+## Installation
 
-## Разработка
+Polis isn't yet available in the Community Plugins directory. To install manually:
+
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](../../releases).
+2. Create a folder named `polis` inside your vault's `.obsidian/plugins/` directory.
+3. Copy the three files into that folder.
+4. In Obsidian, go to **Settings → Community plugins**, disable Safe mode if needed, and enable **Polis**.
+
+## Usage
+
+- Click the brackets icon in the Polis panel header to create a group.
+- Click the vault icon to add a vault to a group (disabled until at least one group exists).
+- Click the pencil icon to toggle edit mode — drag groups and vaults to reorder them, or click a row to edit its name, icon, color, or description.
+- Click the "i" icon on a group to read its description.
+- Configure language, and export/import your data, from **Settings → Polis**.
+
+## Development
+
+Requires Node.js and npm.
 
 ```bash
 npm install
-npm run dev      # сборка в watch-режиме, main.js пересобирается при изменениях
-npm run build    # прод-сборка (проверка типов + минификация)
+npm run dev      # watch mode — main.js rebuilds on every change to main.ts
+npm run build    # production build (type-check + minify)
 ```
 
-### Как тестировать в реальном Obsidian
+### Testing in a real Obsidian vault
 
-1. Создай (или используй существующий) тестовый vault.
-2. В `<vault>/.obsidian/plugins/` создай папку `polis`.
-3. Закинь туда (или сделай symlink) `manifest.json`, `main.js`, `styles.css` из корня проекта.
-4. В Obsidian: Settings → Community plugins → включить Polis.
-5. Удобнее всего — symlink на весь проект, чтобы `npm run dev` сразу подхватывался:
+The easiest way is to symlink (or, on Windows, use a directory junction for) the whole project folder into a test vault's plugins directory, so `npm run dev` rebuilds are picked up without copying files manually:
 
 ```bash
+# macOS / Linux
 ln -s /path/to/obsidian-polis /path/to/TestVault/.obsidian/plugins/polis
+
+# Windows (Command Prompt, no admin rights required)
+mklink /J "C:\path\to\TestVault\.obsidian\plugins\polis" "C:\path\to\obsidian-polis"
 ```
 
-## Git
+Then, in Obsidian: **Settings → Community plugins → enable Polis**. After changes rebuild, reload with **Ctrl/Cmd+P → Reload app without saving**, or toggle the plugin off and on.
 
-```bash
-cd obsidian-polis
-git init
-git add .
-git commit -m "Initial skeleton: view, data model, open vault via URI"
+### Project structure
+
 ```
+main.ts        — plugin entry point, view, data model, modals
+i18n.ts         — locale detection and the t() translation helper
+locales/        — en.json, ru.json, ja.json translation dictionaries
+styles.css      — panel styling, using Obsidian's own CSS variables where possible
+manifest.json   — plugin metadata
+```
+
+## Roadmap
+
+- [ ] Community Plugins directory submission
+- [ ] Additional languages
+- [ ] Broader icon picker
+
+## License
+
+MIT
