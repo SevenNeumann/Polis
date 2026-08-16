@@ -296,3 +296,11 @@
 	color: var(--text-muted);
 	font-style: italic;
 }
+
+/* ---- settings tab: global description textarea ---- */
+
+.polis-settings-textarea {
+	width: 100%;
+	min-width: 300px;
+}
+

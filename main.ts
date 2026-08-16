@@ -57,14 +57,22 @@ export interface PolisGroup {
 	vaults: PolisVault[];
 }
 
+export type PolisInfoVisibility = "groups" | "global" | "both";
+
 export interface PolisSettings {
 	groups: PolisGroup[];
 	language: PolisLanguageSetting;
+	/** free-form description of the whole vault structure, edited from the settings tab */
+	globalDescription: string;
+	/** controls which "i" (info) buttons are shown: per-group only, the global one only, or both */
+	infoVisibility: PolisInfoVisibility;
 }
 
 export const DEFAULT_SETTINGS: PolisSettings = {
 	groups: [],
 	language: "auto",
+	globalDescription: "",
+	infoVisibility: "groups",
 };
 
 function makeId(): string {
@@ -296,6 +304,18 @@ export default class PolisPlugin extends Plugin {
 		// everywhere, not just data — saveSettings() already re-renders open views
 	}
 
+	// ---- description settings ----
+
+	async setGlobalDescription(description: string) {
+		this.settings.globalDescription = description;
+		await this.saveSettings();
+	}
+
+	async setInfoVisibility(visibility: PolisInfoVisibility) {
+		this.settings.infoVisibility = visibility;
+		await this.saveSettings();
+	}
+
 	// ---- import / export ----
 
 	/** Serializes all groups (and their nested vaults) into a portable JSON payload */
@@ -504,6 +524,18 @@ class PolisView extends ItemView {
 			this.editMode = !this.editMode;
 			this.render();
 		};
+
+		const infoVisibility = this.plugin.settings.infoVisibility;
+		if (infoVisibility === "global" || infoVisibility === "both") {
+			const globalInfoBtn = header.createEl("button", {
+				cls: "polis-icon-btn nav-action-button clickable-icon",
+			});
+			setIcon(globalInfoBtn, "info");
+			globalInfoBtn.setAttr("aria-label", t("aria.globalDescription"));
+			globalInfoBtn.onclick = () => {
+				new GlobalInfoModal(this.app, this.plugin.settings.globalDescription).open();
+			};
+		}
 	}
 
 	private renderGroup(container: HTMLElement, group: PolisGroup) {
@@ -527,7 +559,10 @@ class PolisView extends ItemView {
 
 		groupHeader.createEl("span", { text: group.name, cls: "polis-group-name" });
 
-		if (!this.editMode) {
+		const showGroupInfo =
+			!this.editMode &&
+			(this.plugin.settings.infoVisibility === "groups" || this.plugin.settings.infoVisibility === "both");
+		if (showGroupInfo) {
 			const infoBtn = groupHeader.createEl("button", { cls: "polis-info-btn clickable-icon" });
 			setIcon(infoBtn, "info");
 			infoBtn.setAttr("aria-label", t("aria.groupDescription"));
@@ -892,6 +927,30 @@ class GroupInfoModal extends PolisModal {
 	}
 }
 
+class GlobalInfoModal extends PolisModal {
+	constructor(app: App, private description: string) {
+		super(app);
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.createEl("h3", { text: t("global.infoTitle") });
+
+		if (this.description) {
+			contentEl.createEl("p", { text: this.description, cls: "polis-info-desc" });
+		} else {
+			contentEl.createEl("p", {
+				text: t("global.noDescription"),
+				cls: "polis-info-desc polis-info-empty",
+			});
+		}
+	}
+
+	onClose() {
+		this.contentEl.empty();
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Add vault modal
 // ---------------------------------------------------------------------------
@@ -1145,6 +1204,12 @@ const LANGUAGE_OPTIONS: { value: PolisLanguageSetting; labelKey: string }[] = [
 	{ value: "ja", labelKey: "settings.language.ja" },
 ];
 
+const INFO_VISIBILITY_OPTIONS: { value: PolisInfoVisibility; labelKey: string }[] = [
+	{ value: "groups", labelKey: "settings.infoVisibility.groups" },
+	{ value: "global", labelKey: "settings.infoVisibility.global" },
+	{ value: "both", labelKey: "settings.infoVisibility.both" },
+];
+
 class PolisSettingTab extends PluginSettingTab {
 	constructor(app: App, private plugin: PolisPlugin) {
 		super(app, plugin);
@@ -1164,6 +1229,29 @@ class PolisSettingTab extends PluginSettingTab {
 					// re-render the settings tab itself so its own labels update too
 					this.display();
 				});
+			});
+
+		new Setting(containerEl).setName(t("settings.description.heading")).setHeading();
+
+		new Setting(containerEl)
+			.setName(t("settings.infoVisibility.name"))
+			.setDesc(t("settings.infoVisibility.desc"))
+			.addDropdown((dropdown) => {
+				INFO_VISIBILITY_OPTIONS.forEach((opt) => dropdown.addOption(opt.value, t(opt.labelKey)));
+				dropdown.setValue(this.plugin.settings.infoVisibility).onChange(async (value) => {
+					await this.plugin.setInfoVisibility(value as PolisInfoVisibility);
+				});
+			});
+
+		new Setting(containerEl)
+			.setName(t("settings.globalDescription.name"))
+			.setDesc(t("settings.globalDescription.desc"))
+			.addTextArea((text) => {
+				text.setValue(this.plugin.settings.globalDescription).onChange(async (value) => {
+					await this.plugin.setGlobalDescription(value);
+				});
+				text.inputEl.rows = 5;
+				text.inputEl.addClass("polis-settings-textarea");
 			});
 
 		new Setting(containerEl).setName(t("settings.data.heading")).setHeading();

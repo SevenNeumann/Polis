@@ -9,6 +9,10 @@
 	"aria.expand": "Развернуть",
 	"aria.collapse": "Свернуть",
 	"aria.groupDescription": "Описание группы",
+	"aria.globalDescription": "О структуре хранилищ",
+
+	"global.infoTitle": "О структуре хранилищ",
+	"global.noDescription": "Описание ещё не добавлено. Добавь его в Настройки → Polis.",
 
 	"icon.heading": "Иконка",
 	"icon.customLabel": "Своя иконка",
@@ -63,6 +67,15 @@
 	"settings.language.en": "English",
 	"settings.language.ru": "Русский",
 	"settings.language.ja": "日本語",
+
+	"settings.description.heading": "Описания",
+	"settings.infoVisibility.name": "Показывать описания для",
+	"settings.infoVisibility.desc": "Управляет тем, какие иконки «i» показываются: описания для каждой группы, одно общее описание всей структуры, или и то и другое.",
+	"settings.infoVisibility.groups": "Только для групп",
+	"settings.infoVisibility.global": "Только глобальное",
+	"settings.infoVisibility.both": "И то и другое",
+	"settings.globalDescription.name": "Глобальное описание",
+	"settings.globalDescription.desc": "Одно общее описание всей структуры хранилищ — показывается по иконке «i» в шапке панели.",
 
 	"settings.data.heading": "Данные",
 	"settings.export.name": "Экспорт данных",

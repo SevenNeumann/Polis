@@ -9,6 +9,10 @@
 	"aria.expand": "展開",
 	"aria.collapse": "折りたたむ",
 	"aria.groupDescription": "グループの説明",
+	"aria.globalDescription": "このVault構成について",
+
+	"global.infoTitle": "このVault構成について",
+	"global.noDescription": "説明はまだありません。設定 → Polis から追加してください。",
 
 	"icon.heading": "アイコン",
 	"icon.customLabel": "カスタムアイコン",
@@ -63,6 +67,15 @@
 	"settings.language.en": "English",
 	"settings.language.ru": "Русский",
 	"settings.language.ja": "日本語",
+
+	"settings.description.heading": "説明",
+	"settings.infoVisibility.name": "説明の表示対象",
+	"settings.infoVisibility.desc": "「i」アイコンの表示方法を設定します：グループごとの説明、構成全体の共通説明、またはその両方。",
+	"settings.infoVisibility.groups": "グループのみ",
+	"settings.infoVisibility.global": "全体のみ",
+	"settings.infoVisibility.both": "両方",
+	"settings.globalDescription.name": "全体の説明",
+	"settings.globalDescription.desc": "Vault構成全体をまとめて説明するテキストです。パネルヘッダーの「i」アイコンから表示されます。",
 
 	"settings.data.heading": "データ",
 	"settings.export.name": "データをエクスポート",

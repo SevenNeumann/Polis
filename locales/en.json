@@ -9,6 +9,10 @@
 	"aria.expand": "Expand",
 	"aria.collapse": "Collapse",
 	"aria.groupDescription": "Group description",
+	"aria.globalDescription": "About this vault structure",
+
+	"global.infoTitle": "About this vault structure",
+	"global.noDescription": "No description yet. Add one from Settings → Polis.",
 
 	"icon.heading": "Icon",
 	"icon.customLabel": "Custom icon",
@@ -63,6 +67,15 @@
 	"settings.language.en": "English",
 	"settings.language.ru": "Русский",
 	"settings.language.ja": "日本語",
+
+	"settings.description.heading": "Descriptions",
+	"settings.infoVisibility.name": "Show descriptions for",
+	"settings.infoVisibility.desc": "Controls which \"i\" info buttons appear: per-group descriptions, one global description of the whole structure, or both.",
+	"settings.infoVisibility.groups": "Groups only",
+	"settings.infoVisibility.global": "Global only",
+	"settings.infoVisibility.both": "Both",
+	"settings.globalDescription.name": "Global description",
+	"settings.globalDescription.desc": "A single description covering your whole vault structure, shown from the \"i\" icon in the panel header.",
 
 	"settings.data.heading": "Data",
 	"settings.export.name": "Export data",
