@@ -9,7 +9,6 @@
 	"aria.expand": "Expand",
 	"aria.collapse": "Collapse",
 	"aria.groupDescription": "Group description",
-	"aria.addSubgroup": "Add subgroup",
 	"aria.globalDescription": "About this vault structure",
 
 	"global.infoTitle": "About this vault structure",
@@ -35,6 +34,19 @@
 	"group.save": "Save",
 	"group.nameRequired": "Group name can't be empty",
 	"group.noDescription": "No description yet.",
+	"group.parentLabel": "Parent group",
+	"group.parentDesc": "Make this a subgroup of another group, or keep it at the top level.",
+	"group.parentDescNoGroups": "No other top-level groups exist yet to nest this under.",
+	"group.parentNone": "None (top-level group)",
+
+	"deleteGroup.title": "Delete \"{name}\"?",
+	"deleteGroup.desc": "This group isn't empty. Choose what should happen to what's inside it.",
+	"deleteGroup.deleteAll": "Delete everything",
+	"deleteGroup.deleteAllDesc": "Removes this group along with all its vaults and subgroups.",
+	"deleteGroup.moveTo": "Move contents to...",
+	"deleteGroup.moveToDesc": "Moves this group's vaults and subgroups into the selected group, then removes this now-empty group.",
+	"deleteGroup.promote": "Promote to parent",
+	"deleteGroup.promoteDesc": "Moves this subgroup's vaults up into its parent group, then removes this now-empty subgroup.",
 
 	"vault.addTitle": "Add vault",
 	"vault.editTitle": "Edit vault",

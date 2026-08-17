@@ -9,7 +9,6 @@
 	"aria.expand": "展開",
 	"aria.collapse": "折りたたむ",
 	"aria.groupDescription": "グループの説明",
-	"aria.addSubgroup": "サブグループを追加",
 	"aria.globalDescription": "このVault構成について",
 
 	"global.infoTitle": "このVault構成について",
@@ -35,6 +34,19 @@
 	"group.save": "保存",
 	"group.nameRequired": "グループ名を入力してください",
 	"group.noDescription": "説明はまだありません。",
+	"group.parentLabel": "親グループ",
+	"group.parentDesc": "このグループを別のグループのサブグループにするか、最上位のままにするかを選べます。",
+	"group.parentDescNoGroups": "ネストできる他の最上位グループがまだありません。",
+	"group.parentNone": "なし（最上位グループ）",
+
+	"deleteGroup.title": "「{name}」を削除しますか？",
+	"deleteGroup.desc": "このグループは空ではありません。中身をどうするか選んでください。",
+	"deleteGroup.deleteAll": "すべて削除",
+	"deleteGroup.deleteAllDesc": "このグループを、中のVaultとサブグループごと削除します。",
+	"deleteGroup.moveTo": "内容を移動...",
+	"deleteGroup.moveToDesc": "このグループのVaultとサブグループを選択したグループに移動し、空になったこのグループを削除します。",
+	"deleteGroup.promote": "親グループに昇格",
+	"deleteGroup.promoteDesc": "このサブグループのVaultを親グループに移動し、空になったこのサブグループを削除します。",
 
 	"vault.addTitle": "Vault を追加",
 	"vault.editTitle": "Vault を編集",

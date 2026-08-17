@@ -73,6 +73,8 @@ export interface PolisSettings {
 	globalDescription: string;
 	/** controls which "i" (info) buttons are shown: per-group only, the global one only, or both */
 	infoVisibility: PolisInfoVisibility;
+	/** id of the group last used in "Add vault", pre-selected next time the modal opens */
+	lastUsedGroupId: string | null;
 }
 
 export const DEFAULT_SETTINGS: PolisSettings = {
@@ -80,6 +82,7 @@ export const DEFAULT_SETTINGS: PolisSettings = {
 	language: "auto",
 	globalDescription: "",
 	infoVisibility: "groups",
+	lastUsedGroupId: null,
 };
 
 function makeId(): string {
@@ -97,6 +100,28 @@ function migrateGroup(group: PolisGroup): PolisGroup {
 		...group,
 		subgroups: (group.subgroups ?? []).map((sg) => ({ ...sg, subgroups: sg.subgroups ?? [] })),
 	};
+}
+
+/**
+ * Flattens top-level groups and their subgroups into a single list suitable
+ * for a dropdown, each entry carrying enough info to render it distinctly
+ * (subgroups are indented and labeled with their parent's name).
+ */
+interface GroupOption {
+	group: PolisGroup;
+	isSubgroup: boolean;
+	parentName?: string;
+}
+
+function flattenGroupsForPicker(topLevelGroups: PolisGroup[]): GroupOption[] {
+	const options: GroupOption[] = [];
+	for (const group of topLevelGroups) {
+		options.push({ group, isSubgroup: false });
+		for (const subgroup of group.subgroups) {
+			options.push({ group: subgroup, isSubgroup: true, parentName: group.name });
+		}
+	}
+	return options;
 }
 
 /** A vault known to Obsidian itself (from its global config) */
@@ -279,11 +304,105 @@ export default class PolisPlugin extends Plugin {
 		this.saveSettings();
 	}
 
+	/**
+	 * Like updateGroup, but also handles moving the group to a different
+	 * parent (or promoting/demoting between top-level and subgroup) when
+	 * `newParentGroupId` differs from where the group currently lives.
+	 * `newParentGroupId` is `null` for "make this a top-level group".
+	 */
+	updateGroupWithParent(
+		groupId: string,
+		patch: Partial<Omit<PolisGroup, "id" | "vaults" | "subgroups">>,
+		newParentGroupId: string | null
+	) {
+		const found = this.findGroup(groupId);
+		if (!found) return;
+		Object.assign(found.group, patch);
+
+		const currentlyTopLevel = found.siblings === this.settings.groups;
+
+		// simplest correct check: compare current parent id to the requested one
+		const currentParentId = currentlyTopLevel
+			? null
+			: this.settings.groups.find((g) => g.subgroups.includes(found.group))?.id ?? null;
+
+		if (currentParentId === newParentGroupId) {
+			this.saveSettings();
+			return;
+		}
+
+		found.siblings.splice(found.siblings.indexOf(found.group), 1);
+
+		if (newParentGroupId) {
+			const parent = this.settings.groups.find((g) => g.id === newParentGroupId);
+			if (parent) {
+				parent.subgroups.push(found.group);
+			} else {
+				// parent vanished somehow — fall back to top-level rather than dropping the group
+				this.settings.groups.push(found.group);
+			}
+		} else {
+			this.settings.groups.push(found.group);
+		}
+
+		this.saveSettings();
+	}
+
 	removeGroup(groupId: string) {
 		const found = this.findGroup(groupId);
 		if (!found) return;
 		found.siblings.splice(found.siblings.indexOf(found.group), 1);
 		this.saveSettings();
+	}
+
+	/**
+	 * Deletes a group that has content (vaults and/or subgroups), applying
+	 * one of three strategies:
+	 * - "delete-all": remove the group and everything inside it
+	 * - "move-to": move the group's vaults and subgroups into another group
+	 *   (targetGroupId required), then remove the now-empty group
+	 * - "promote": only valid for a subgroup — its vaults and subgroups are
+	 *   lifted up into the parent group, then the now-empty subgroup is removed
+	 */
+	deleteGroupWithStrategy(
+		groupId: string,
+		strategy: "delete-all" | "move-to" | "promote",
+		targetGroupId?: string
+	) {
+		const found = this.findGroup(groupId);
+		if (!found) return;
+		const group = found.group;
+
+		if (strategy === "delete-all") {
+			this.removeGroup(groupId);
+			return;
+		}
+
+		if (strategy === "move-to" && targetGroupId) {
+			const targetFound = this.findGroup(targetGroupId);
+			if (!targetFound) return;
+			targetFound.group.vaults.push(...group.vaults);
+			// subgroups can only be moved into a top-level target, since nesting
+			// is one level deep — the caller (DeleteGroupModal) only offers
+			// valid targets, but this is a defensive no-op if that's ever violated
+			if (this.settings.groups.includes(targetFound.group)) {
+				targetFound.group.subgroups.push(...group.subgroups);
+			}
+			this.removeGroup(groupId);
+			return;
+		}
+
+		if (strategy === "promote") {
+			const parent = this.settings.groups.find((g) => g.subgroups.includes(group));
+			if (!parent) return;
+			parent.vaults.push(...group.vaults);
+			// promoting a subgroup's own subgroups would create a second level of
+			// nesting under the parent, which isn't supported — but a subgroup's
+			// subgroups array is always empty by construction, so there's nothing
+			// to lift here in practice
+			this.removeGroup(groupId);
+			return;
+		}
 	}
 
 	toggleGroupCollapsed(groupId: string) {
@@ -395,6 +514,14 @@ export default class PolisPlugin extends Plugin {
 	async setInfoVisibility(visibility: PolisInfoVisibility) {
 		this.settings.infoVisibility = visibility;
 		await this.saveSettings();
+	}
+
+	/** Remembers the group last used in "Add vault", so it's pre-selected next time */
+	async setLastUsedGroup(groupId: string) {
+		this.settings.lastUsedGroupId = groupId;
+		await this.saveData(this.settings);
+		// intentionally skip saveSettings()'s full view re-render here — this is
+		// a silent preference, not a data change the open panel needs to reflect
 	}
 
 	// ---- import / export ----
@@ -580,9 +707,11 @@ class PolisView extends ItemView {
 		const addGroupBtn = header.createEl("button", { cls: "polis-icon-btn nav-action-button clickable-icon" });
 		setIcon(addGroupBtn, "scan");
 		addGroupBtn.setAttr("aria-label", t("aria.createGroup"));
+		addGroupBtn.disabled = this.editMode;
 		addGroupBtn.onclick = () => {
-			new EditGroupModal(this.app, null, (data) => {
-				this.plugin.addGroup(data.name, data.description, data.icon, data.color);
+			if (this.editMode) return;
+			new EditGroupModal(this.app, null, this.plugin.settings.groups, null, (data) => {
+				this.plugin.addGroup(data.name, data.description, data.icon, data.color, data.parentGroupId ?? undefined);
 			}).open();
 		};
 
@@ -590,13 +719,19 @@ class PolisView extends ItemView {
 		setIcon(addVaultBtn, "vault");
 		addVaultBtn.setAttr("aria-label", t("aria.addVault"));
 		const hasGroups = this.plugin.settings.groups.length > 0;
-		addVaultBtn.disabled = !hasGroups;
+		addVaultBtn.disabled = !hasGroups || this.editMode;
 		if (!hasGroups) addVaultBtn.setAttr("aria-disabled", "true");
 		addVaultBtn.onclick = () => {
-			if (this.plugin.settings.groups.length === 0) return;
-			new AddVaultModal(this.app, this.plugin.settings.groups, (groupId, name, vaultPath) => {
-				this.plugin.addVault(groupId, name, vaultPath);
-			}).open();
+			if (this.editMode || this.plugin.settings.groups.length === 0) return;
+			new AddVaultModal(
+				this.app,
+				this.plugin.settings.groups,
+				this.plugin.settings.lastUsedGroupId,
+				(groupId, name, vaultPath) => {
+					this.plugin.addVault(groupId, name, vaultPath);
+					this.plugin.setLastUsedGroup(groupId);
+				}
+			).open();
 		};
 
 		const editBtn = header.createEl("button", { cls: "polis-icon-btn nav-action-button clickable-icon" });
@@ -615,7 +750,9 @@ class PolisView extends ItemView {
 			});
 			setIcon(globalInfoBtn, "info");
 			globalInfoBtn.setAttr("aria-label", t("aria.globalDescription"));
+			globalInfoBtn.disabled = this.editMode;
 			globalInfoBtn.onclick = () => {
+				if (this.editMode) return;
 				new GlobalInfoModal(this.app, this.plugin.settings.globalDescription).open();
 			};
 		}
@@ -656,18 +793,6 @@ class PolisView extends ItemView {
 			};
 		}
 
-		if (this.editMode && !isSubgroup) {
-			const addSubgroupBtn = groupHeader.createEl("button", { cls: "polis-info-btn clickable-icon" });
-			setIcon(addSubgroupBtn, "folder-plus");
-			addSubgroupBtn.setAttr("aria-label", t("aria.addSubgroup"));
-			addSubgroupBtn.onclick = (e) => {
-				e.stopPropagation();
-				new EditGroupModal(this.app, null, (data) => {
-					this.plugin.addGroup(data.name, data.description, data.icon, data.color, group.id);
-				}).open();
-			};
-		}
-
 		if (this.editMode) {
 			const grip = groupHeader.createSpan({ cls: "polis-grip" });
 			setIcon(grip, "grip-vertical");
@@ -678,13 +803,18 @@ class PolisView extends ItemView {
 			if (!this.editMode) return;
 			const target = e.target as HTMLElement;
 			if (target.closest(".collapse-icon, .polis-grip, .polis-info-btn")) return;
+			const currentParent = isSubgroup
+				? this.plugin.settings.groups.find((g) => g.subgroups.includes(group))
+				: undefined;
 			new EditGroupModal(
 				this.app,
 				group,
+				this.plugin.settings.groups,
+				currentParent?.id ?? null,
 				(data) => {
-					this.plugin.updateGroup(group.id, data);
+					this.plugin.updateGroupWithParent(group.id, data, data.parentGroupId);
 				},
-				() => this.plugin.removeGroup(group.id)
+				() => this.handleGroupDeletion(group, isSubgroup, currentParent ?? null)
 			).open();
 		});
 
@@ -760,6 +890,28 @@ class PolisView extends ItemView {
 				this.plugin.openVault(vault);
 			}
 		};
+	}
+
+	/**
+	 * Decides how to handle deleting a group: if it has no content (no
+	 * vaults, no subgroups), it's removed immediately with no further
+	 * questions. Otherwise, DeleteGroupModal asks the user what to do with
+	 * that content before anything is actually deleted.
+	 */
+	private handleGroupDeletion(group: PolisGroup, isSubgroup: boolean, parent: PolisGroup | null) {
+		const hasContent = group.vaults.length > 0 || group.subgroups.length > 0;
+		if (!hasContent) {
+			this.plugin.removeGroup(group.id);
+			return;
+		}
+
+		const otherGroups = isSubgroup
+			? (parent?.subgroups ?? []).filter((g) => g.id !== group.id)
+			: this.plugin.settings.groups.filter((g) => g.id !== group.id);
+
+		new DeleteGroupModal(this.app, group, isSubgroup, otherGroups, (strategy, targetGroupId) => {
+			this.plugin.deleteGroupWithStrategy(group.id, strategy, targetGroupId);
+		}).open();
 	}
 
 	// ---------------------------------------------------------------------
@@ -911,6 +1063,8 @@ interface GroupFormData {
 	description?: string;
 	icon: string;
 	color?: string;
+	/** id of the top-level group this should become a subgroup of, or null for a top-level group */
+	parentGroupId: string | null;
 }
 
 /**
@@ -932,6 +1086,10 @@ class EditGroupModal extends PolisModal {
 	constructor(
 		app: App,
 		private existing: PolisGroup | null,
+		/** all top-level groups, used to populate the parent-group dropdown */
+		private topLevelGroups: PolisGroup[],
+		/** id of the group `existing` currently lives under, if it's a subgroup */
+		private currentParentId: string | null,
 		private onSave: (data: GroupFormData) => void,
 		private onDelete?: () => void
 	) {
@@ -941,6 +1099,7 @@ class EditGroupModal extends PolisModal {
 			description: existing?.description,
 			icon: existing?.icon ?? DEFAULT_GROUP_ICON,
 			color: existing?.color,
+			parentGroupId: currentParentId,
 		};
 	}
 
@@ -954,6 +1113,8 @@ class EditGroupModal extends PolisModal {
 			});
 			text.inputEl.focus();
 		});
+
+		this.buildParentPicker(contentEl);
 
 		buildIconPicker(contentEl, this.data.icon, (icon) => {
 			this.data.icon = icon;
@@ -1003,6 +1164,40 @@ class EditGroupModal extends PolisModal {
 		);
 	}
 
+	/**
+	 * Parent-group dropdown. Only top-level groups are ever offered as a
+	 * parent, since nesting is exactly one level deep. When editing an
+	 * existing group that already has its own subgroups, it can't become a
+	 * subgroup itself — that would create a second level — so it's excluded
+	 * from candidacy entirely (the field is hidden rather than shown-disabled,
+	 * since there's nothing meaningful to pick from in that case).
+	 */
+	private buildParentPicker(contentEl: HTMLElement) {
+		const isEditingGroupWithSubgroups = !!this.existing && this.existing.subgroups.length > 0;
+		if (isEditingGroupWithSubgroups) return;
+
+		const candidates = this.topLevelGroups.filter((g) => g.id !== this.existing?.id);
+
+		const setting = new Setting(contentEl).setName(t("group.parentLabel")).setDesc(t("group.parentDesc"));
+
+		if (candidates.length === 0) {
+			setting.setDesc(t("group.parentDescNoGroups"));
+			setting.addDropdown((dropdown) => {
+				dropdown.addOption("", t("group.parentNone"));
+				dropdown.setDisabled(true);
+			});
+			return;
+		}
+
+		setting.addDropdown((dropdown) => {
+			dropdown.addOption("", t("group.parentNone"));
+			candidates.forEach((g) => dropdown.addOption(g.id, g.name));
+			dropdown.setValue(this.data.parentGroupId ?? "").onChange((value) => {
+				this.data.parentGroupId = value || null;
+			});
+		});
+	}
+
 	private submit() {
 		const name = this.data.name.trim();
 		if (!name) {
@@ -1014,6 +1209,7 @@ class EditGroupModal extends PolisModal {
 			description: this.data.description?.trim() || undefined,
 			icon: this.data.icon,
 			color: this.data.color,
+			parentGroupId: this.data.parentGroupId,
 		});
 		this.close();
 	}
@@ -1024,8 +1220,90 @@ class EditGroupModal extends PolisModal {
 }
 
 // ---------------------------------------------------------------------------
-// Group description modal (the "i" icon)
+// Delete-with-content modal — asks how to handle a group's vaults and
+// subgroups before deleting a group that isn't empty.
 // ---------------------------------------------------------------------------
+
+type DeleteGroupStrategy = "delete-all" | "move-to" | "promote";
+
+class DeleteGroupModal extends PolisModal {
+	private targetGroupId = "";
+
+	constructor(
+		app: App,
+		private group: PolisGroup,
+		private isSubgroup: boolean,
+		/** candidate groups content can be moved into — siblings at the same level */
+		private otherGroups: PolisGroup[],
+		private onChoose: (strategy: DeleteGroupStrategy, targetGroupId?: string) => void
+	) {
+		super(app);
+		this.targetGroupId = otherGroups[0]?.id ?? "";
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.createEl("h3", { text: t("deleteGroup.title", { name: this.group.name }) });
+		contentEl.createEl("p", { text: t("deleteGroup.desc"), cls: "polis-info-desc" });
+
+		new Setting(contentEl)
+			.setName(t("deleteGroup.deleteAll"))
+			.setDesc(t("deleteGroup.deleteAllDesc"))
+			.addButton((btn) =>
+				btn
+					.setButtonText(t("deleteGroup.deleteAll"))
+					.setWarning()
+					.onClick(() => {
+						this.onChoose("delete-all");
+						this.close();
+					})
+			);
+
+		if (this.otherGroups.length > 0) {
+			let dropdown: HTMLSelectElement;
+			new Setting(contentEl)
+				.setName(t("deleteGroup.moveTo"))
+				.setDesc(t("deleteGroup.moveToDesc"))
+				.addDropdown((dd) => {
+					this.otherGroups.forEach((g) => dd.addOption(g.id, g.name));
+					dd.setValue(this.targetGroupId).onChange((value) => {
+						this.targetGroupId = value;
+					});
+					dropdown = dd.selectEl;
+				})
+				.addButton((btn) =>
+					btn
+						.setButtonText(t("deleteGroup.moveTo"))
+						.setCta()
+						.onClick(() => {
+							this.onChoose("move-to", this.targetGroupId);
+							this.close();
+						})
+				);
+		}
+
+		if (this.isSubgroup) {
+			new Setting(contentEl)
+				.setName(t("deleteGroup.promote"))
+				.setDesc(t("deleteGroup.promoteDesc"))
+				.addButton((btn) =>
+					btn
+						.setButtonText(t("deleteGroup.promote"))
+						.setCta()
+						.onClick(() => {
+							this.onChoose("promote");
+							this.close();
+						})
+				);
+		}
+
+		new Setting(contentEl).addButton((btn) => btn.setButtonText(t("group.cancel")).onClick(() => this.close()));
+	}
+
+	onClose() {
+		this.contentEl.empty();
+	}
+}
 
 class GroupInfoModal extends PolisModal {
 	constructor(app: App, private group: PolisGroup) {
@@ -1090,14 +1368,18 @@ class AddVaultModal extends PolisModal {
 	private obsidianVaultName = "";
 	private nameInputEl!: HTMLInputElement;
 	private pathInputEl!: HTMLInputElement;
+	private groupOptions: GroupOption[];
 
 	constructor(
 		app: App,
-		private groups: PolisGroup[],
+		private topLevelGroups: PolisGroup[],
+		preferredGroupId: string | null,
 		private onSubmit: (groupId: string, name: string, location: { path?: string; obsidianVaultName?: string }) => void
 	) {
 		super(app);
-		this.groupId = groups[0]?.id ?? "";
+		this.groupOptions = flattenGroupsForPicker(topLevelGroups);
+		const preferredStillExists = preferredGroupId && this.groupOptions.some((o) => o.group.id === preferredGroupId);
+		this.groupId = preferredStillExists ? preferredGroupId! : this.groupOptions[0]?.group.id ?? "";
 	}
 
 	onOpen() {
@@ -1105,7 +1387,10 @@ class AddVaultModal extends PolisModal {
 		contentEl.createEl("h3", { text: t("vault.addTitle") });
 
 		new Setting(contentEl).setName(t("vault.groupLabel")).addDropdown((dropdown) => {
-			this.groups.forEach((g) => dropdown.addOption(g.id, g.name));
+			this.groupOptions.forEach((opt) => {
+				const label = opt.isSubgroup ? `${opt.parentName} → ${opt.group.name}` : opt.group.name;
+				dropdown.addOption(opt.group.id, label);
+			});
 			dropdown.setValue(this.groupId).onChange((value) => {
 				this.groupId = value;
 			});
@@ -1212,16 +1497,18 @@ class EditVaultModal extends PolisModal {
 	private path: string;
 	private obsidianVaultName: string;
 	private confirmingDelete = false;
+	private groupOptions: GroupOption[];
 
 	constructor(
 		app: App,
-		private groups: PolisGroup[],
+		topLevelGroups: PolisGroup[],
 		currentGroupId: string,
 		private vault: PolisVault,
 		private onSave: (groupId: string, name: string, location: { path?: string; obsidianVaultName?: string }) => void,
 		private onDelete: () => void
 	) {
 		super(app);
+		this.groupOptions = flattenGroupsForPicker(topLevelGroups);
 		this.groupId = currentGroupId;
 		this.name = vault.name;
 		this.path = vault.path ?? "";
@@ -1233,7 +1520,10 @@ class EditVaultModal extends PolisModal {
 		contentEl.createEl("h3", { text: t("vault.editTitle") });
 
 		new Setting(contentEl).setName(t("vault.groupLabel")).addDropdown((dropdown) => {
-			this.groups.forEach((g) => dropdown.addOption(g.id, g.name));
+			this.groupOptions.forEach((opt) => {
+				const label = opt.isSubgroup ? `${opt.parentName} → ${opt.group.name}` : opt.group.name;
+				dropdown.addOption(opt.group.id, label);
+			});
 			dropdown.setValue(this.groupId).onChange((value) => {
 				this.groupId = value;
 			});

@@ -9,7 +9,6 @@
 	"aria.expand": "Развернуть",
 	"aria.collapse": "Свернуть",
 	"aria.groupDescription": "Описание группы",
-	"aria.addSubgroup": "Добавить подгруппу",
 	"aria.globalDescription": "О структуре хранилищ",
 
 	"global.infoTitle": "О структуре хранилищ",
@@ -35,6 +34,19 @@
 	"group.save": "Сохранить",
 	"group.nameRequired": "Название группы не может быть пустым",
 	"group.noDescription": "Описание ещё не добавлено.",
+	"group.parentLabel": "Родительская группа",
+	"group.parentDesc": "Сделать эту группу подгруппой другой группы, или оставить на верхнем уровне.",
+	"group.parentDescNoGroups": "Пока нет других групп верхнего уровня, под которые можно вложить эту.",
+	"group.parentNone": "Нет (группа верхнего уровня)",
+
+	"deleteGroup.title": "Удалить «{name}»?",
+	"deleteGroup.desc": "Эта группа не пуста. Выбери, что сделать с её содержимым.",
+	"deleteGroup.deleteAll": "Удалить всё",
+	"deleteGroup.deleteAllDesc": "Удаляет эту группу вместе со всеми её хранилищами и подгруппами.",
+	"deleteGroup.moveTo": "Перенести содержимое в...",
+	"deleteGroup.moveToDesc": "Переносит хранилища и подгруппы этой группы в выбранную группу, затем удаляет эту (теперь пустую) группу.",
+	"deleteGroup.promote": "Поднять до родительской",
+	"deleteGroup.promoteDesc": "Переносит хранилища этой подгруппы в родительскую группу, затем удаляет эту (теперь пустую) подгруппу.",
 
 	"vault.addTitle": "Добавить хранилище",
 	"vault.editTitle": "Редактировать хранилище",
