@@ -55,6 +55,13 @@ export interface PolisGroup {
 	color?: string;
 	collapsed?: boolean;
 	vaults: PolisVault[];
+	/**
+	 * Nested subgroups — exactly one level deep. A subgroup has the exact
+	 * same shape as a top-level group (icon, color, description, vaults),
+	 * but its own `subgroups` array is intentionally left empty and unused:
+	 * Polis only supports a single level of nesting.
+	 */
+	subgroups: PolisGroup[];
 }
 
 export type PolisInfoVisibility = "groups" | "global" | "both";
@@ -77,6 +84,19 @@ export const DEFAULT_SETTINGS: PolisSettings = {
 
 function makeId(): string {
 	return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+/**
+ * Ensures a group loaded from disk (possibly saved by an older version of
+ * Polis, before subgroups existed) always has a well-formed `subgroups`
+ * array. Subgroups are only one level deep, so nested groups' own
+ * `subgroups` are normalized but not expected to be populated.
+ */
+function migrateGroup(group: PolisGroup): PolisGroup {
+	return {
+		...group,
+		subgroups: (group.subgroups ?? []).map((sg) => ({ ...sg, subgroups: sg.subgroups ?? [] })),
+	};
 }
 
 /** A vault known to Obsidian itself (from its global config) */
@@ -187,7 +207,9 @@ export default class PolisPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const loaded = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		loaded.groups = (loaded.groups ?? []).map(migrateGroup);
+		this.settings = loaded;
 	}
 
 	async saveSettings() {
@@ -199,8 +221,34 @@ export default class PolisPlugin extends Plugin {
 
 	// ---- groups ----
 
-	addGroup(name: string, description?: string, icon?: string, color?: string) {
-		this.settings.groups.push({
+	/**
+	 * Finds a group by id anywhere in the (at most one level deep) hierarchy.
+	 * Returns both the group and the array it currently lives in (either
+	 * `settings.groups` or some parent's `subgroups`), so callers can splice
+	 * it out, reorder it, etc. without needing to know which level it's on.
+	 */
+	private findGroup(groupId: string): { group: PolisGroup; siblings: PolisGroup[] } | null {
+		const topIndex = this.settings.groups.findIndex((g) => g.id === groupId);
+		if (topIndex !== -1) {
+			return { group: this.settings.groups[topIndex], siblings: this.settings.groups };
+		}
+		for (const parent of this.settings.groups) {
+			const subIndex = parent.subgroups.findIndex((g) => g.id === groupId);
+			if (subIndex !== -1) {
+				return { group: parent.subgroups[subIndex], siblings: parent.subgroups };
+			}
+		}
+		return null;
+	}
+
+	addGroup(
+		name: string,
+		description?: string,
+		icon?: string,
+		color?: string,
+		parentGroupId?: string
+	) {
+		const newGroup: PolisGroup = {
 			id: makeId(),
 			name,
 			description: description || undefined,
@@ -208,30 +256,44 @@ export default class PolisPlugin extends Plugin {
 			color: color || undefined,
 			collapsed: false,
 			vaults: [],
-		});
+			subgroups: [],
+		};
+
+		if (parentGroupId) {
+			const parent = this.settings.groups.find((g) => g.id === parentGroupId);
+			if (parent) {
+				parent.subgroups.push(newGroup);
+				this.saveSettings();
+				return;
+			}
+		}
+
+		this.settings.groups.push(newGroup);
 		this.saveSettings();
 	}
 
-	updateGroup(groupId: string, patch: Partial<Omit<PolisGroup, "id" | "vaults">>) {
-		const group = this.settings.groups.find((g) => g.id === groupId);
-		if (!group) return;
-		Object.assign(group, patch);
+	updateGroup(groupId: string, patch: Partial<Omit<PolisGroup, "id" | "vaults" | "subgroups">>) {
+		const found = this.findGroup(groupId);
+		if (!found) return;
+		Object.assign(found.group, patch);
 		this.saveSettings();
 	}
 
 	removeGroup(groupId: string) {
-		this.settings.groups = this.settings.groups.filter((g) => g.id !== groupId);
+		const found = this.findGroup(groupId);
+		if (!found) return;
+		found.siblings.splice(found.siblings.indexOf(found.group), 1);
 		this.saveSettings();
 	}
 
 	toggleGroupCollapsed(groupId: string) {
-		const group = this.settings.groups.find((g) => g.id === groupId);
-		if (!group) return;
-		group.collapsed = !group.collapsed;
+		const found = this.findGroup(groupId);
+		if (!found) return;
+		found.group.collapsed = !found.group.collapsed;
 		this.saveSettings();
 	}
 
-	/** Move a group to position newIndex (array index after the item has been removed) */
+	/** Move a top-level group to position newIndex among other top-level groups */
 	moveGroup(groupId: string, newIndex: number) {
 		const groups = this.settings.groups;
 		const fromIndex = groups.findIndex((g) => g.id === groupId);
@@ -242,42 +304,61 @@ export default class PolisPlugin extends Plugin {
 		this.saveSettings();
 	}
 
+	/**
+	 * Move a subgroup to position newIndex — within the same parent or into
+	 * a different parent group. Subgroups can't be nested further, so both
+	 * `fromParentId` and `toParentId` must refer to top-level groups.
+	 */
+	moveSubgroup(subgroupId: string, fromParentId: string, toParentId: string, newIndex: number) {
+		const fromParent = this.settings.groups.find((g) => g.id === fromParentId);
+		const toParent = this.settings.groups.find((g) => g.id === toParentId);
+		if (!fromParent || !toParent) return;
+
+		const idx = fromParent.subgroups.findIndex((g) => g.id === subgroupId);
+		if (idx === -1) return;
+		const [item] = fromParent.subgroups.splice(idx, 1);
+
+		const clamped = Math.max(0, Math.min(newIndex, toParent.subgroups.length));
+		toParent.subgroups.splice(clamped, 0, item);
+		this.saveSettings();
+	}
+
 	// ---- vaults ----
 
 	addVault(groupId: string, name: string, location: { path?: string; obsidianVaultName?: string }) {
-		const group = this.settings.groups.find((g) => g.id === groupId);
-		if (!group) return;
-		group.vaults.push({ id: makeId(), name, ...location });
+		const found = this.findGroup(groupId);
+		if (!found) return;
+		found.group.vaults.push({ id: makeId(), name, ...location });
 		this.saveSettings();
 	}
 
 	updateVault(groupId: string, vaultId: string, patch: Partial<Omit<PolisVault, "id">>) {
-		const group = this.settings.groups.find((g) => g.id === groupId);
-		const vault = group?.vaults.find((v) => v.id === vaultId);
+		const found = this.findGroup(groupId);
+		const vault = found?.group.vaults.find((v) => v.id === vaultId);
 		if (!vault) return;
 		Object.assign(vault, patch);
 		this.saveSettings();
 	}
 
 	removeVault(groupId: string, vaultId: string) {
-		const group = this.settings.groups.find((g) => g.id === groupId);
-		if (!group) return;
-		group.vaults = group.vaults.filter((v) => v.id !== vaultId);
+		const found = this.findGroup(groupId);
+		if (!found) return;
+		found.group.vaults = found.group.vaults.filter((v) => v.id !== vaultId);
 		this.saveSettings();
 	}
 
-	/** Move a vault to position newIndex — within the same group or into another one */
+	/** Move a vault to position newIndex — within the same group or into another one (including across the nesting level) */
 	moveVault(vaultId: string, fromGroupId: string, toGroupId: string, newIndex: number) {
-		const fromGroup = this.settings.groups.find((g) => g.id === fromGroupId);
-		const toGroup = this.settings.groups.find((g) => g.id === toGroupId);
-		if (!fromGroup || !toGroup) return;
+		const fromFound = this.findGroup(fromGroupId);
+		const toFound = this.findGroup(toGroupId);
+		if (!fromFound || !toFound) return;
 
-		const idx = fromGroup.vaults.findIndex((v) => v.id === vaultId);
+		const idx = fromFound.group.vaults.findIndex((v) => v.id === vaultId);
 		if (idx === -1) return;
-		const [item] = fromGroup.vaults.splice(idx, 1);
+		const [item] = fromFound.group.vaults.splice(idx, 1);
 
-		const clamped = Math.max(0, Math.min(newIndex, toGroup.vaults.length));
-		toGroup.vaults.splice(clamped, 0, item);
+		const clamped = Math.max(0, Math.min(newIndex, toFound.group.vaults.length));
+		toFound.group.vaults.splice(clamped, 0, item);
 		this.saveSettings();
 	}
 
@@ -334,9 +415,11 @@ export default class PolisPlugin extends Plugin {
 	 * identifiers generated once per group and preserved across export/import.
 	 */
 	importGroups(
-		imported: PolisGroup[],
+		importedRaw: PolisGroup[],
 		strategy: "replace" | "merge-overwrite" | "merge-keep"
 	): { added: number; overwritten: number; skipped: number } {
+		const imported = importedRaw.map(migrateGroup);
+
 		if (strategy === "replace") {
 			this.settings.groups = imported;
 			this.saveSettings();
@@ -538,8 +621,9 @@ class PolisView extends ItemView {
 		}
 	}
 
-	private renderGroup(container: HTMLElement, group: PolisGroup) {
+	private renderGroup(container: HTMLElement, group: PolisGroup, isSubgroup = false) {
 		const groupEl = container.createDiv({ cls: "polis-group" });
+		if (isSubgroup) groupEl.addClass("polis-subgroup");
 		groupEl.dataset.groupId = group.id;
 
 		const groupHeader = groupEl.createDiv({ cls: "polis-group-header" });
@@ -572,6 +656,18 @@ class PolisView extends ItemView {
 			};
 		}
 
+		if (this.editMode && !isSubgroup) {
+			const addSubgroupBtn = groupHeader.createEl("button", { cls: "polis-info-btn clickable-icon" });
+			setIcon(addSubgroupBtn, "folder-plus");
+			addSubgroupBtn.setAttr("aria-label", t("aria.addSubgroup"));
+			addSubgroupBtn.onclick = (e) => {
+				e.stopPropagation();
+				new EditGroupModal(this.app, null, (data) => {
+					this.plugin.addGroup(data.name, data.description, data.icon, data.color, group.id);
+				}).open();
+			};
+		}
+
 		if (this.editMode) {
 			const grip = groupHeader.createSpan({ cls: "polis-grip" });
 			setIcon(grip, "grip-vertical");
@@ -581,7 +677,7 @@ class PolisView extends ItemView {
 		groupHeader.addEventListener("click", (e) => {
 			if (!this.editMode) return;
 			const target = e.target as HTMLElement;
-			if (target.closest(".collapse-icon, .polis-grip")) return;
+			if (target.closest(".collapse-icon, .polis-grip, .polis-info-btn")) return;
 			new EditGroupModal(
 				this.app,
 				group,
@@ -600,11 +696,22 @@ class PolisView extends ItemView {
 			const vaultList = groupEl.createDiv({ cls: "polis-vault-list" });
 			vaultList.dataset.groupId = group.id;
 			group.vaults.forEach((vault, index) => {
-				const isLast = index === group.vaults.length - 1;
+				const isLast = index === group.vaults.length - 1 && group.subgroups.length === 0;
 				this.renderVault(vaultList, group, vault, isLast);
 			});
 			if (this.editMode) {
 				this.setupVaultSortable(vaultList);
+			}
+
+			if (!isSubgroup && group.subgroups.length > 0) {
+				const subgroupsContainer = groupEl.createDiv({ cls: "polis-subgroups-container" });
+				subgroupsContainer.dataset.parentGroupId = group.id;
+				group.subgroups.forEach((subgroup) => {
+					this.renderGroup(subgroupsContainer, subgroup, true);
+				});
+				if (this.editMode) {
+					this.setupSubgroupSortable(subgroupsContainer);
+				}
 			}
 		}
 	}
@@ -700,6 +807,27 @@ class PolisView extends ItemView {
 				const toGroupId = (evt.to as HTMLElement).dataset.groupId;
 				if (!vaultId || !fromGroupId || !toGroupId || evt.newIndex === undefined) return;
 				this.plugin.moveVault(vaultId, fromGroupId, toGroupId, evt.newIndex);
+			},
+		});
+		this.sortableInstances.push(sortable);
+	}
+
+	private setupSubgroupSortable(subgroupsContainer: HTMLElement) {
+		const sortable = Sortable.create(subgroupsContainer, {
+			group: "polis-subgroups",
+			animation: 180,
+			easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+			handle: ".polis-grip",
+			draggable: ".polis-subgroup",
+			ghostClass: "polis-sortable-ghost",
+			chosenClass: "polis-sortable-chosen",
+			dragClass: "polis-sortable-drag",
+			onEnd: (evt: Sortable.SortableEvent) => {
+				const subgroupId = (evt.item as HTMLElement).dataset.groupId;
+				const fromParentId = (evt.from as HTMLElement).dataset.parentGroupId;
+				const toParentId = (evt.to as HTMLElement).dataset.parentGroupId;
+				if (!subgroupId || !fromParentId || !toParentId || evt.newIndex === undefined) return;
+				this.plugin.moveSubgroup(subgroupId, fromParentId, toParentId, evt.newIndex);
 			},
 		});
 		this.sortableInstances.push(sortable);

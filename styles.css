@@ -95,6 +95,29 @@
 	padding: 2px 4px;
 }
 
+/* ---- subgroups: nested one level deep, same look as a top-level group ----
+   The subgroup's own header stays flush with its parent — only its vault
+   list gets the extra indent, so the visual nesting matches vaults inside
+   a normal group rather than shifting the whole subgroup block. */
+
+.polis-subgroups-container {
+	display: flex;
+	flex-direction: column;
+	margin-top: 4px;
+}
+
+.polis-subgroups-container .polis-subgroup {
+	margin-bottom: 10px;
+}
+
+.polis-subgroups-container .polis-subgroup:last-child {
+	margin-bottom: 0;
+}
+
+.polis-subgroup > .polis-vault-list {
+	margin-left: 20px;
+}
+
 .polis-group-header {
 	display: flex;
 	align-items: center;

@@ -9,6 +9,7 @@
 	"aria.expand": "Expand",
 	"aria.collapse": "Collapse",
 	"aria.groupDescription": "Group description",
+	"aria.addSubgroup": "Add subgroup",
 	"aria.globalDescription": "About this vault structure",
 
 	"global.infoTitle": "About this vault structure",

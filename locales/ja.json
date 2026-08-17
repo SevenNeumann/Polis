@@ -9,6 +9,7 @@
 	"aria.expand": "展開",
 	"aria.collapse": "折りたたむ",
 	"aria.groupDescription": "グループの説明",
+	"aria.addSubgroup": "サブグループを追加",
 	"aria.globalDescription": "このVault構成について",
 
 	"global.infoTitle": "このVault構成について",
