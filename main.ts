@@ -7,8 +7,9 @@ import {
 	Plugin,
 	PluginSettingTab,
 	Setting,
-	WorkspaceLeaf,
 	setIcon,
+	setTooltip,
+	WorkspaceLeaf,
 } from "obsidian";
 import Sortable from "sortablejs";
 import { PolisLanguageSetting, setActiveLocale, t } from "./i18n";
@@ -44,6 +45,8 @@ export interface PolisVault {
 	 * device before — Obsidian resolves the name locally, no path needed.
 	 */
 	obsidianVaultName?: string;
+	/** optional free-form note on what this vault is for — shown as a hover tooltip on desktop */
+	description?: string;
 }
 
 /** A group (context) that bundles together several vaults */
@@ -75,6 +78,8 @@ export interface PolisSettings {
 	infoVisibility: PolisInfoVisibility;
 	/** id of the group last used in "Add vault", pre-selected next time the modal opens */
 	lastUsedGroupId: string | null;
+	/** desktop-only: show a hover tooltip with a vault's description (when it has one) */
+	vaultTooltipsEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: PolisSettings = {
@@ -83,6 +88,7 @@ export const DEFAULT_SETTINGS: PolisSettings = {
 	globalDescription: "",
 	infoVisibility: "groups",
 	lastUsedGroupId: null,
+	vaultTooltipsEnabled: true,
 };
 
 function makeId(): string {
@@ -444,7 +450,11 @@ export default class PolisPlugin extends Plugin {
 
 	// ---- vaults ----
 
-	addVault(groupId: string, name: string, location: { path?: string; obsidianVaultName?: string }) {
+	addVault(
+		groupId: string,
+		name: string,
+		location: { path?: string; obsidianVaultName?: string; description?: string }
+	) {
 		const found = this.findGroup(groupId);
 		if (!found) return;
 		found.group.vaults.push({ id: makeId(), name, ...location });
@@ -516,6 +526,25 @@ export default class PolisPlugin extends Plugin {
 		await this.saveSettings();
 	}
 
+	/**
+	 * Applies a batch of settings-tab fields at once — used by the Save
+	 * button in PolisSettingTab, so language/description/visibility/hover
+	 * changes take effect together rather than one saveData() call each.
+	 */
+	async applySettingsPatch(patch: {
+		language: PolisLanguageSetting;
+		globalDescription: string;
+		infoVisibility: PolisInfoVisibility;
+		vaultTooltipsEnabled: boolean;
+	}) {
+		this.settings.language = patch.language;
+		this.settings.globalDescription = patch.globalDescription;
+		this.settings.infoVisibility = patch.infoVisibility;
+		this.settings.vaultTooltipsEnabled = patch.vaultTooltipsEnabled;
+		setActiveLocale(patch.language);
+		await this.saveSettings();
+	}
+
 	/** Remembers the group last used in "Add vault", so it's pre-selected next time */
 	async setLastUsedGroup(groupId: string) {
 		this.settings.lastUsedGroupId = groupId;
@@ -526,14 +555,48 @@ export default class PolisPlugin extends Plugin {
 
 	// ---- import / export ----
 
-	/** Serializes all groups (and their nested vaults) into a portable JSON payload */
-	exportData(): string {
-		const payload = {
+	/**
+	 * Serializes all groups (and their nested vaults) into a portable JSON
+	 * payload. When `includeSettings` is true, also includes language,
+	 * global description, info visibility, and the vault-tooltip preference —
+	 * off by default, since settings are usually local to one Obsidian
+	 * installation and not something you'd want silently overwritten by
+	 * importing someone else's (or your own other device's) export.
+	 */
+	exportData(includeSettings = false): string {
+		const payload: {
+			polisExportVersion: number;
+			exportedAt: string;
+			groups: PolisGroup[];
+			settings?: Pick<PolisSettings, "language" | "globalDescription" | "infoVisibility" | "vaultTooltipsEnabled">;
+		} = {
 			polisExportVersion: 1,
 			exportedAt: new Date().toISOString(),
 			groups: this.settings.groups,
 		};
+
+		if (includeSettings) {
+			payload.settings = {
+				language: this.settings.language,
+				globalDescription: this.settings.globalDescription,
+				infoVisibility: this.settings.infoVisibility,
+				vaultTooltipsEnabled: this.settings.vaultTooltipsEnabled,
+			};
+		}
+
 		return JSON.stringify(payload, null, 2);
+	}
+
+	/** Applies the optional `settings` block from an imported export, if present */
+	async importSettingsFields(fields: Partial<PolisSettings>) {
+		if (fields.language !== undefined) {
+			this.settings.language = fields.language;
+			setActiveLocale(fields.language);
+		}
+		if (fields.globalDescription !== undefined) this.settings.globalDescription = fields.globalDescription;
+		if (fields.infoVisibility !== undefined) this.settings.infoVisibility = fields.infoVisibility;
+		if (fields.vaultTooltipsEnabled !== undefined) this.settings.vaultTooltipsEnabled = fields.vaultTooltipsEnabled;
+		await this.saveSettings();
 	}
 
 	/**
@@ -583,6 +646,14 @@ class PolisView extends ItemView {
 	private resizeHandler = () => this.updateDimFrame();
 	private sortableInstances: Sortable[] = [];
 
+	/**
+	 * ids of vaults whose on-disk path couldn't be found during the last
+	 * check. This is a transient runtime cache, not persisted to data.json —
+	 * a vault that's temporarily unavailable (e.g. an unmounted drive)
+	 * shouldn't be permanently flagged in saved data.
+	 */
+	private missingVaultIds = new Set<string>();
+
 	constructor(leaf: WorkspaceLeaf, plugin: PolisPlugin) {
 		super(leaf);
 		this.plugin = plugin;
@@ -598,7 +669,36 @@ class PolisView extends ItemView {
 		return "landmark";
 	}
 	async onOpen() {
+		this.checkVaultAvailability();
 		this.render();
+	}
+
+	/**
+	 * Checks which vaults' on-disk paths no longer exist, so they can be
+	 * flagged in the UI. Desktop-only: only vaults that have a `path` are
+	 * checkable this way — vaults opened by Obsidian vault name have no
+	 * local filesystem path to check, and mobile has no fs access at all.
+	 */
+	private checkVaultAvailability() {
+		this.missingVaultIds.clear();
+		if (!Platform.isDesktopApp) return;
+
+		const node = getNodeModules();
+		if (!node) return;
+
+		const allVaults: PolisVault[] = [];
+		for (const group of this.plugin.settings.groups) {
+			allVaults.push(...group.vaults);
+			for (const subgroup of group.subgroups) {
+				allVaults.push(...subgroup.vaults);
+			}
+		}
+
+		for (const vault of allVaults) {
+			if (vault.path && !node.fs.existsSync(vault.path)) {
+				this.missingVaultIds.add(vault.id);
+			}
+		}
 	}
 	render() {
 		const container = this.containerEl.children[1] as HTMLElement;
@@ -850,6 +950,7 @@ class PolisView extends ItemView {
 		const row = vaultList.createDiv({ cls: "polis-vault-row" });
 		row.dataset.vaultId = vault.id;
 		row.toggleClass("polis-vault-row-last", isLast);
+		row.toggleClass("polis-vault-missing", this.missingVaultIds.has(vault.id));
 
 		// tree connector: shared "trunk" segment + horizontal branch to the dot
 		const connector = row.createDiv({ cls: "polis-tree-connector" });
@@ -857,6 +958,10 @@ class PolisView extends ItemView {
 		connector.createDiv({ cls: "polis-tree-branch" });
 
 		const vaultEl = row.createDiv({ cls: "polis-vault" });
+
+		if (Platform.isDesktopApp && this.plugin.settings.vaultTooltipsEnabled && vault.description) {
+			setTooltip(vaultEl, vault.description, { placement: "bottom" });
+		}
 
 		vaultEl.createEl("span", { text: vault.name, cls: "polis-vault-name" });
 
@@ -882,6 +987,7 @@ class PolisView extends ItemView {
 							name,
 							path: location.path,
 							obsidianVaultName: location.obsidianVaultName,
+							description: location.description,
 						});
 					},
 					() => this.plugin.removeVault(group.id, vault.id)
@@ -1366,6 +1472,7 @@ class AddVaultModal extends PolisModal {
 	private name = "";
 	private path = "";
 	private obsidianVaultName = "";
+	private description = "";
 	private nameInputEl!: HTMLInputElement;
 	private pathInputEl!: HTMLInputElement;
 	private groupOptions: GroupOption[];
@@ -1374,7 +1481,11 @@ class AddVaultModal extends PolisModal {
 		app: App,
 		private topLevelGroups: PolisGroup[],
 		preferredGroupId: string | null,
-		private onSubmit: (groupId: string, name: string, location: { path?: string; obsidianVaultName?: string }) => void
+		private onSubmit: (
+			groupId: string,
+			name: string,
+			location: { path?: string; obsidianVaultName?: string; description?: string }
+		) => void
 	) {
 		super(app);
 		this.groupOptions = flattenGroupsForPicker(topLevelGroups);
@@ -1445,6 +1556,16 @@ class AddVaultModal extends PolisModal {
 				});
 		}
 
+		new Setting(contentEl)
+			.setName(t("vault.descLabel"))
+			.setDesc(t("vault.descDesc"))
+			.addTextArea((text) => {
+				text.onChange((value) => {
+					this.description = value;
+				});
+				text.inputEl.rows = 3;
+			});
+
 		new Setting(contentEl).addButton((btn) =>
 			btn
 				.setButtonText(t("vault.add"))
@@ -1457,6 +1578,7 @@ class AddVaultModal extends PolisModal {
 		const name = this.name.trim();
 		const vaultPath = this.path.trim();
 		const obsidianVaultName = this.obsidianVaultName.trim();
+		const description = this.description.trim() || undefined;
 
 		if (!this.groupId) {
 			new Notice(t("vault.groupRequired"));
@@ -1471,13 +1593,13 @@ class AddVaultModal extends PolisModal {
 				new Notice(t("vault.pathRequired"));
 				return;
 			}
-			this.onSubmit(this.groupId, name, { path: vaultPath });
+			this.onSubmit(this.groupId, name, { path: vaultPath, description });
 		} else {
 			if (!obsidianVaultName) {
 				new Notice(t("vault.obsidianNameRequired"));
 				return;
 			}
-			this.onSubmit(this.groupId, name, { obsidianVaultName });
+			this.onSubmit(this.groupId, name, { obsidianVaultName, description });
 		}
 		this.close();
 	}
@@ -1496,6 +1618,7 @@ class EditVaultModal extends PolisModal {
 	private name: string;
 	private path: string;
 	private obsidianVaultName: string;
+	private description: string;
 	private confirmingDelete = false;
 	private groupOptions: GroupOption[];
 
@@ -1504,7 +1627,11 @@ class EditVaultModal extends PolisModal {
 		topLevelGroups: PolisGroup[],
 		currentGroupId: string,
 		private vault: PolisVault,
-		private onSave: (groupId: string, name: string, location: { path?: string; obsidianVaultName?: string }) => void,
+		private onSave: (
+			groupId: string,
+			name: string,
+			location: { path?: string; obsidianVaultName?: string; description?: string }
+		) => void,
 		private onDelete: () => void
 	) {
 		super(app);
@@ -1513,6 +1640,7 @@ class EditVaultModal extends PolisModal {
 		this.name = vault.name;
 		this.path = vault.path ?? "";
 		this.obsidianVaultName = vault.obsidianVaultName ?? "";
+		this.description = vault.description ?? "";
 	}
 
 	onOpen() {
@@ -1553,6 +1681,16 @@ class EditVaultModal extends PolisModal {
 				});
 		}
 
+		new Setting(contentEl)
+			.setName(t("vault.descLabel"))
+			.setDesc(t("vault.descDesc"))
+			.addTextArea((text) => {
+				text.setValue(this.description).onChange((value) => {
+					this.description = value;
+				});
+				text.inputEl.rows = 3;
+			});
+
 		const footer = new Setting(contentEl);
 		footer.addButton((btn) =>
 			btn
@@ -1585,6 +1723,7 @@ class EditVaultModal extends PolisModal {
 		const name = this.name.trim();
 		const vaultPath = this.path.trim();
 		const obsidianVaultName = this.obsidianVaultName.trim();
+		const description = this.description.trim() || undefined;
 
 		if (!name) {
 			new Notice(t("vault.nameRequiredShort"));
@@ -1595,13 +1734,13 @@ class EditVaultModal extends PolisModal {
 				new Notice(t("vault.pathRequired"));
 				return;
 			}
-			this.onSave(this.groupId, name, { path: vaultPath, obsidianVaultName: undefined });
+			this.onSave(this.groupId, name, { path: vaultPath, obsidianVaultName: undefined, description });
 		} else {
 			if (!obsidianVaultName) {
 				new Notice(t("vault.obsidianNameRequired"));
 				return;
 			}
-			this.onSave(this.groupId, name, { path: undefined, obsidianVaultName });
+			this.onSave(this.groupId, name, { path: undefined, obsidianVaultName, description });
 		}
 		this.close();
 	}
@@ -1629,23 +1768,48 @@ const INFO_VISIBILITY_OPTIONS: { value: PolisInfoVisibility; labelKey: string }[
 ];
 
 class PolisSettingTab extends PluginSettingTab {
+	/** buffered edits — not applied to plugin.settings until Save is clicked */
+	private draft: {
+		language: PolisLanguageSetting;
+		infoVisibility: PolisInfoVisibility;
+		globalDescription: string;
+		vaultTooltipsEnabled: boolean;
+	};
+	private dirty = false;
+	private includeSettingsInExport = false;
+
 	constructor(app: App, private plugin: PolisPlugin) {
 		super(app, plugin);
+		this.draft = this.snapshotFromSettings();
+	}
+
+	private snapshotFromSettings() {
+		return {
+			language: this.plugin.settings.language,
+			infoVisibility: this.plugin.settings.infoVisibility,
+			globalDescription: this.plugin.settings.globalDescription,
+			vaultTooltipsEnabled: this.plugin.settings.vaultTooltipsEnabled,
+		};
+	}
+
+	private markDirty() {
+		this.dirty = true;
 	}
 
 	display() {
 		const { containerEl } = this;
 		containerEl.empty();
+		this.draft = this.snapshotFromSettings();
+		this.dirty = false;
 
 		new Setting(containerEl)
 			.setName(t("settings.language.name"))
 			.setDesc(t("settings.language.desc"))
 			.addDropdown((dropdown) => {
 				LANGUAGE_OPTIONS.forEach((opt) => dropdown.addOption(opt.value, t(opt.labelKey)));
-				dropdown.setValue(this.plugin.settings.language).onChange(async (value) => {
-					await this.plugin.setLanguage(value as PolisLanguageSetting);
-					// re-render the settings tab itself so its own labels update too
-					this.display();
+				dropdown.setValue(this.draft.language).onChange((value) => {
+					this.draft.language = value as PolisLanguageSetting;
+					this.markDirty();
 				});
 			});
 
@@ -1656,8 +1820,9 @@ class PolisSettingTab extends PluginSettingTab {
 			.setDesc(t("settings.infoVisibility.desc"))
 			.addDropdown((dropdown) => {
 				INFO_VISIBILITY_OPTIONS.forEach((opt) => dropdown.addOption(opt.value, t(opt.labelKey)));
-				dropdown.setValue(this.plugin.settings.infoVisibility).onChange(async (value) => {
-					await this.plugin.setInfoVisibility(value as PolisInfoVisibility);
+				dropdown.setValue(this.draft.infoVisibility).onChange((value) => {
+					this.draft.infoVisibility = value as PolisInfoVisibility;
+					this.markDirty();
 				});
 			});
 
@@ -1665,18 +1830,44 @@ class PolisSettingTab extends PluginSettingTab {
 			.setName(t("settings.globalDescription.name"))
 			.setDesc(t("settings.globalDescription.desc"))
 			.addTextArea((text) => {
-				text.setValue(this.plugin.settings.globalDescription).onChange(async (value) => {
-					await this.plugin.setGlobalDescription(value);
+				text.setValue(this.draft.globalDescription).onChange((value) => {
+					this.draft.globalDescription = value;
+					this.markDirty();
 				});
 				text.inputEl.rows = 5;
 				text.inputEl.addClass("polis-settings-textarea");
 			});
+
+		new Setting(containerEl)
+			.setName(t("settings.vaultTooltips.name"))
+			.setDesc(t("settings.vaultTooltips.desc"))
+			.addToggle((toggle) => {
+				toggle.setValue(this.draft.vaultTooltipsEnabled).onChange((value) => {
+					this.draft.vaultTooltipsEnabled = value;
+					this.markDirty();
+				});
+			});
+
+		new Setting(containerEl)
+			.addButton((btn) => btn.setButtonText(t("settings.cancel")).onClick(() => this.discardAndRefresh()))
+			.addButton((btn) =>
+				btn
+					.setButtonText(t("settings.save"))
+					.setCta()
+					.onClick(() => this.saveDraft())
+			);
 
 		new Setting(containerEl).setName(t("settings.data.heading")).setHeading();
 
 		new Setting(containerEl)
 			.setName(t("settings.export.name"))
 			.setDesc(t("settings.export.desc"))
+			.addToggle((toggle) => {
+				toggle.setValue(this.includeSettingsInExport).setTooltip(t("settings.export.includeSettings"));
+				toggle.onChange((value) => {
+					this.includeSettingsInExport = value;
+				});
+			})
 			.addButton((btn) =>
 				btn.setButtonText(t("settings.export.button")).onClick(() => this.handleExport())
 			);
@@ -1689,8 +1880,33 @@ class PolisSettingTab extends PluginSettingTab {
 			);
 	}
 
+	private async saveDraft() {
+		await this.plugin.applySettingsPatch(this.draft);
+		this.dirty = false;
+		new Notice(t("settings.saved"));
+		this.display();
+	}
+
+	private discardAndRefresh() {
+		this.dirty = false;
+		this.display();
+	}
+
+	/**
+	 * Called by Obsidian when the user navigates away from this settings tab
+	 * (switching to another tab, or closing the Settings window). Unlike a
+	 * Modal, a settings tab has no backdrop-click to intercept, and Obsidian
+	 * gives no way to block navigation here — so unsaved changes can't be
+	 * prevented, only surfaced with a Notice on the way out.
+	 */
+	hide() {
+		if (this.dirty) {
+			new Notice(t("settings.discardedNotice"));
+		}
+	}
+
 	private handleExport() {
-		const json = this.plugin.exportData();
+		const json = this.plugin.exportData(this.includeSettingsInExport);
 		const blob = new Blob([json], { type: "application/json" });
 		const url = URL.createObjectURL(blob);
 		const link = document.createElement("a");
@@ -1728,14 +1944,18 @@ class PolisSettingTab extends PluginSettingTab {
 			return;
 		}
 
-		const groups = (parsed as { groups?: unknown })?.groups;
-		if (!Array.isArray(groups)) {
+		const payload = parsed as { groups?: unknown; settings?: Partial<PolisSettings> };
+		if (!Array.isArray(payload.groups)) {
 			new Notice(t("settings.import.invalidFile"));
 			return;
 		}
+		const groups = payload.groups as PolisGroup[];
 
-		new ImportStrategyModal(this.app, groups as PolisGroup[], this.plugin.settings.groups.length, (strategy) => {
-			const result = this.plugin.importGroups(groups as PolisGroup[], strategy);
+		new ImportStrategyModal(this.app, groups, this.plugin.settings.groups.length, (strategy) => {
+			const result = this.plugin.importGroups(groups, strategy);
+			if (payload.settings) {
+				this.plugin.importSettingsFields(payload.settings);
+			}
 			if (strategy === "replace") {
 				new Notice(t("import.resultReplace", { count: groups.length }));
 			} else {

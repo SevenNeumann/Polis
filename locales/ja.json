@@ -58,6 +58,8 @@
 	"vault.pathLabel": "Vault のパス",
 	"vault.pathDesc": "ディスク上の vault フォルダへの絶対パス",
 	"vault.pathPlaceholder": "D:\\Vault\\MyVault",
+	"vault.descLabel": "説明",
+	"vault.descDesc": "任意。設定で有効にすると、デスクトップでホバー時にツールチップとして表示されます。",
 	"vault.add": "追加",
 	"vault.delete": "Vault を削除",
 	"vault.deleteConfirm": "本当に削除しますか？",
@@ -90,9 +92,18 @@
 	"settings.globalDescription.name": "全体の説明",
 	"settings.globalDescription.desc": "Vault構成全体をまとめて説明するテキストです。パネルヘッダーの「i」アイコンから表示されます。",
 
+	"settings.vaultTooltips.name": "Vaultホバーツールチップ",
+	"settings.vaultTooltips.desc": "デスクトップのみ。パネル内でVaultにホバーした際、その説明をツールチップとして表示します。",
+
+	"settings.save": "保存",
+	"settings.cancel": "キャンセル",
+	"settings.saved": "設定を保存しました。",
+	"settings.discardedNotice": "未保存の設定変更は破棄されました。",
+
 	"settings.data.heading": "データ",
 	"settings.export.name": "データをエクスポート",
 	"settings.export.desc": "すべてのグループと vault を JSON ファイルに保存します。",
+	"settings.export.includeSettings": "言語、説明、その他の設定もエクスポートに含める",
 	"settings.export.button": "エクスポート",
 	"settings.export.success": "{count} 件のグループをエクスポートしました。",
 

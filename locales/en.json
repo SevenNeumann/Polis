@@ -58,6 +58,8 @@
 	"vault.pathLabel": "Vault path",
 	"vault.pathDesc": "Absolute path to the vault folder on disk",
 	"vault.pathPlaceholder": "D:\\Vault\\MyVault",
+	"vault.descLabel": "Description",
+	"vault.descDesc": "Optional. Shown as a hover tooltip on desktop if enabled in settings.",
 	"vault.add": "Add",
 	"vault.delete": "Delete vault",
 	"vault.deleteConfirm": "Really delete?",
@@ -90,9 +92,18 @@
 	"settings.globalDescription.name": "Global description",
 	"settings.globalDescription.desc": "A single description covering your whole vault structure, shown from the \"i\" icon in the panel header.",
 
+	"settings.vaultTooltips.name": "Vault hover tooltips",
+	"settings.vaultTooltips.desc": "Desktop only. Show a vault's description as a tooltip when hovering over it in the panel.",
+
+	"settings.save": "Save",
+	"settings.cancel": "Cancel",
+	"settings.saved": "Settings saved.",
+	"settings.discardedNotice": "Unsaved settings changes were discarded.",
+
 	"settings.data.heading": "Data",
 	"settings.export.name": "Export data",
 	"settings.export.desc": "Save all groups and vaults to a JSON file.",
+	"settings.export.includeSettings": "Also include language, descriptions, and other settings in the export",
 	"settings.export.button": "Export",
 	"settings.export.success": "Exported {count} group(s).",
 

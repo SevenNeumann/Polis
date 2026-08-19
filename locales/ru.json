@@ -58,6 +58,8 @@
 	"vault.pathLabel": "Путь к vault'у",
 	"vault.pathDesc": "Абсолютный путь к папке хранилища на диске",
 	"vault.pathPlaceholder": "D:\\Vault\\MyVault",
+	"vault.descLabel": "Описание",
+	"vault.descDesc": "Необязательно. Показывается как всплывающая подсказка на десктопе, если включено в настройках.",
 	"vault.add": "Добавить",
 	"vault.delete": "Удалить хранилище",
 	"vault.deleteConfirm": "Точно удалить?",
@@ -90,9 +92,18 @@
 	"settings.globalDescription.name": "Глобальное описание",
 	"settings.globalDescription.desc": "Одно общее описание всей структуры хранилищ — показывается по иконке «i» в шапке панели.",
 
+	"settings.vaultTooltips.name": "Подсказка при наведении на хранилище",
+	"settings.vaultTooltips.desc": "Только на десктопе. Показывать описание хранилища как всплывающую подсказку при наведении на него в панели.",
+
+	"settings.save": "Сохранить",
+	"settings.cancel": "Отмена",
+	"settings.saved": "Настройки сохранены.",
+	"settings.discardedNotice": "Несохранённые изменения настроек отменены.",
+
 	"settings.data.heading": "Данные",
 	"settings.export.name": "Экспорт данных",
 	"settings.export.desc": "Сохранить все группы и хранилища в JSON-файл.",
+	"settings.export.includeSettings": "Также включить в экспорт язык, описания и другие настройки",
 	"settings.export.button": "Экспорт",
 	"settings.export.success": "Экспортировано групп: {count}.",
 
