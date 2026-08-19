@@ -654,6 +654,16 @@ class PolisView extends ItemView {
 	 */
 	private missingVaultIds = new Set<string>();
 
+	/**
+	 * The vault currently being dragged, tracked via SortableJS's onStart/
+	 * onEnd. Used to support dropping a vault directly onto a group's header
+	 * (moving it into that group), which SortableJS itself doesn't support —
+	 * it only reorders within/between whole lists, not "into" a single
+	 * foreign element. We layer plain HTML5 dragover/drop listeners on top
+	 * of each group header, gated on this state.
+	 */
+	private draggedVault: { vaultId: string; fromGroupId: string } | null = null;
+
 	constructor(leaf: WorkspaceLeaf, plugin: PolisPlugin) {
 		super(leaf);
 		this.plugin = plugin;
@@ -805,7 +815,7 @@ class PolisView extends ItemView {
 		const header = container.createDiv({ cls: "nav-buttons-container" });
 
 		const addGroupBtn = header.createEl("button", { cls: "polis-icon-btn nav-action-button clickable-icon" });
-		setIcon(addGroupBtn, "scan");
+		setIcon(addGroupBtn, "folder-plus");
 		addGroupBtn.setAttr("aria-label", t("aria.createGroup"));
 		addGroupBtn.disabled = this.editMode;
 		addGroupBtn.onclick = () => {
@@ -864,6 +874,10 @@ class PolisView extends ItemView {
 		groupEl.dataset.groupId = group.id;
 
 		const groupHeader = groupEl.createDiv({ cls: "polis-group-header" });
+
+		if (this.editMode) {
+			this.attachGroupDropTarget(groupHeader, group);
+		}
 
 		const chevron = groupHeader.createDiv({ cls: "tree-item-icon collapse-icon" });
 		chevron.toggleClass("is-collapsed", !!group.collapsed);
@@ -1031,6 +1045,44 @@ class PolisView extends ItemView {
 		this.sortableInstances = [];
 	}
 
+	/**
+	 * Lets a vault be dropped directly onto a group's header to move it into
+	 * that group (appended at the end), instead of having to land precisely
+	 * inside its vault list. SortableJS itself has no concept of "drop onto
+	 * a single foreign element" — it only reorders within/between whole
+	 * lists — so this listens to the same native HTML5 drag events SortableJS
+	 * relies on under the hood, gated on `this.draggedVault` (set by that
+	 * list's onStart/onEnd) so it only activates during an actual vault drag.
+	 */
+	private attachGroupDropTarget(groupHeader: HTMLElement, group: PolisGroup) {
+		groupHeader.addEventListener("dragover", (e) => {
+			if (!this.draggedVault) return;
+			e.preventDefault();
+			groupHeader.addClass("polis-group-drop-target");
+		});
+
+		groupHeader.addEventListener("dragleave", () => {
+			groupHeader.removeClass("polis-group-drop-target");
+		});
+
+		groupHeader.addEventListener("drop", (e) => {
+			if (!this.draggedVault) return;
+			e.preventDefault();
+			e.stopPropagation();
+			groupHeader.removeClass("polis-group-drop-target");
+			const { vaultId, fromGroupId } = this.draggedVault;
+			if (fromGroupId === group.id) return; // already in this group, nothing to do
+			this.plugin.moveVault(vaultId, fromGroupId, group.id, group.vaults.length);
+		});
+	}
+
+	/** Clears any leftover drop-target highlight — called once a drag ends, regardless of outcome */
+	private clearGroupDropHighlight() {
+		this.containerEl
+			.querySelectorAll(".polis-group-drop-target")
+			.forEach((el) => el.removeClass("polis-group-drop-target"));
+	}
+
 	private setupGroupSortable(groupsContainer: HTMLElement) {
 		const sortable = Sortable.create(groupsContainer, {
 			animation: 180,
@@ -1059,7 +1111,14 @@ class PolisView extends ItemView {
 			ghostClass: "polis-sortable-ghost",
 			chosenClass: "polis-sortable-chosen",
 			dragClass: "polis-sortable-drag",
+			onStart: (evt: Sortable.SortableEvent) => {
+				const vaultId = (evt.item as HTMLElement).dataset.vaultId;
+				const fromGroupId = (evt.from as HTMLElement).dataset.groupId;
+				if (vaultId && fromGroupId) this.draggedVault = { vaultId, fromGroupId };
+			},
 			onEnd: (evt: Sortable.SortableEvent) => {
+				this.draggedVault = null;
+				this.clearGroupDropHighlight();
 				const vaultId = (evt.item as HTMLElement).dataset.vaultId;
 				const fromGroupId = (evt.from as HTMLElement).dataset.groupId;
 				const toGroupId = (evt.to as HTMLElement).dataset.groupId;

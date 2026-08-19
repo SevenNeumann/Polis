@@ -134,6 +134,14 @@
 	background: var(--background-modifier-hover);
 }
 
+/* group header while a vault is being dragged directly over it (drop-to-move-into) */
+.polis-group-drop-target {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: -2px;
+	background: var(--background-modifier-hover);
+	border-radius: 4px;
+}
+
 .collapse-icon,
 .polis-info-btn {
 	cursor: pointer;
@@ -264,6 +272,15 @@
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+
+/* vault whose on-disk path no longer exists (checked on panel open, desktop only) */
+.polis-vault-missing .polis-vault-name {
+	color: var(--text-error);
+}
+
+.polis-vault-missing .polis-tree-connector::after {
+	background: var(--text-error);
 }
 
 /* ---- modals: icon and color pickers ---- */
