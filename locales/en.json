@@ -94,6 +94,7 @@
 
 	"settings.vaultTooltips.name": "Vault hover tooltips",
 	"settings.vaultTooltips.desc": "Desktop only. Show a vault's description as a tooltip when hovering over it in the panel.",
+	"settings.vaultTooltips.descUnavailable": "Unavailable while \"Show descriptions for\" is set to Global only.",
 
 	"settings.save": "Save",
 	"settings.cancel": "Cancel",

@@ -94,6 +94,7 @@
 
 	"settings.vaultTooltips.name": "Vaultホバーツールチップ",
 	"settings.vaultTooltips.desc": "デスクトップのみ。パネル内でVaultにホバーした際、その説明をツールチップとして表示します。",
+	"settings.vaultTooltips.descUnavailable": "「説明の表示対象」が「全体のみ」に設定されている間は利用できません。",
 
 	"settings.save": "保存",
 	"settings.cancel": "キャンセル",

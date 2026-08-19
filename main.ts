@@ -354,6 +354,17 @@ export default class PolisPlugin extends Plugin {
 		this.saveSettings();
 	}
 
+	/**
+	 * Moves a group to become a subgroup of `newParentId` without touching
+	 * any of its other fields — used by drag-and-drop (dropping a group
+	 * directly onto another group's header), as opposed to
+	 * updateGroupWithParent, which is used by the edit form and also
+	 * applies a full field patch.
+	 */
+	makeSubgroupOf(groupId: string, newParentId: string) {
+		this.updateGroupWithParent(groupId, {}, newParentId);
+	}
+
 	removeGroup(groupId: string) {
 		const found = this.findGroup(groupId);
 		if (!found) return;
@@ -426,6 +437,24 @@ export default class PolisPlugin extends Plugin {
 		const [item] = groups.splice(fromIndex, 1);
 		const clamped = Math.max(0, Math.min(newIndex, groups.length));
 		groups.splice(clamped, 0, item);
+		this.saveSettings();
+	}
+
+	/**
+	 * Promotes a subgroup to a top-level group at position newIndex. Unlike
+	 * moveGroup, this looks the group up among *subgroups* first (it isn't
+	 * in settings.groups yet), removes it from its parent's subgroups array,
+	 * and inserts it into settings.groups — used when a subgroup is dragged
+	 * out into the top-level groups list.
+	 */
+	promoteToTopLevel(groupId: string, newIndex: number) {
+		const parent = this.settings.groups.find((g) => g.subgroups.some((sg) => sg.id === groupId));
+		if (!parent) return;
+		const subIndex = parent.subgroups.findIndex((sg) => sg.id === groupId);
+		if (subIndex === -1) return;
+		const [item] = parent.subgroups.splice(subIndex, 1);
+		const clamped = Math.max(0, Math.min(newIndex, this.settings.groups.length));
+		this.settings.groups.splice(clamped, 0, item);
 		this.saveSettings();
 	}
 
@@ -664,6 +693,15 @@ class PolisView extends ItemView {
 	 */
 	private draggedVault: { vaultId: string; fromGroupId: string } | null = null;
 
+	/**
+	 * The group (top-level or subgroup) currently being dragged, tracked via
+	 * SortableJS's onStart/onEnd on the group/subgroup sortable lists. Lets
+	 * a group be dropped directly onto another top-level group's header to
+	 * become its subgroup — moving a group "into" another isn't something
+	 * plain reordering (which is all SortableJS does) can express.
+	 */
+	private draggedGroup: { groupId: string; wasSubgroupOfId: string | null } | null = null;
+
 	constructor(leaf: WorkspaceLeaf, plugin: PolisPlugin) {
 		super(leaf);
 		this.plugin = plugin;
@@ -876,7 +914,7 @@ class PolisView extends ItemView {
 		const groupHeader = groupEl.createDiv({ cls: "polis-group-header" });
 
 		if (this.editMode) {
-			this.attachGroupDropTarget(groupHeader, group);
+			this.attachGroupDropTarget(groupHeader, group, isSubgroup);
 		}
 
 		const chevron = groupHeader.createDiv({ cls: "tree-item-icon collapse-icon" });
@@ -973,7 +1011,8 @@ class PolisView extends ItemView {
 
 		const vaultEl = row.createDiv({ cls: "polis-vault" });
 
-		if (Platform.isDesktopApp && this.plugin.settings.vaultTooltipsEnabled && vault.description) {
+		const tooltipsAvailable = this.plugin.settings.infoVisibility !== "global";
+		if (Platform.isDesktopApp && tooltipsAvailable && this.plugin.settings.vaultTooltipsEnabled && vault.description) {
 			setTooltip(vaultEl, vault.description, { placement: "bottom" });
 		}
 
@@ -1046,34 +1085,81 @@ class PolisView extends ItemView {
 	}
 
 	/**
-	 * Lets a vault be dropped directly onto a group's header to move it into
-	 * that group (appended at the end), instead of having to land precisely
-	 * inside its vault list. SortableJS itself has no concept of "drop onto
-	 * a single foreign element" — it only reorders within/between whole
-	 * lists — so this listens to the same native HTML5 drag events SortableJS
-	 * relies on under the hood, gated on `this.draggedVault` (set by that
-	 * list's onStart/onEnd) so it only activates during an actual vault drag.
+	 * Lets a vault OR a group be dropped directly onto a group's header —
+	 * for a vault, this moves it into that group (appended at the end); for
+	 * a group, this makes the dragged group a subgroup of the target (or, if
+	 * the dragged group already has its own subgroups, refuses — that would
+	 * create a second level of nesting, which isn't supported). SortableJS
+	 * itself has no concept of "drop onto a single foreign element" — it
+	 * only reorders within/between whole lists — so this listens to the same
+	 * native HTML5 drag events SortableJS relies on under the hood, gated on
+	 * `draggedVault`/`draggedGroup` (set by each list's onStart/onEnd) so it
+	 * only activates during an actual drag.
+	 *
+	 * `isTargetSubgroup` disables group-onto-group drops entirely for
+	 * subgroup targets, since nesting is capped at one level — a group can
+	 * only become a subgroup of a *top-level* group, never of another
+	 * subgroup. Vaults can still be dropped onto a subgroup's header.
 	 */
-	private attachGroupDropTarget(groupHeader: HTMLElement, group: PolisGroup) {
+	private attachGroupDropTarget(groupHeader: HTMLElement, group: PolisGroup, isTargetSubgroup: boolean) {
 		groupHeader.addEventListener("dragover", (e) => {
-			if (!this.draggedVault) return;
+			if (!this.draggedVault && !this.canDropGroupOnto(group, isTargetSubgroup)) return;
 			e.preventDefault();
+			e.stopPropagation();
 			groupHeader.addClass("polis-group-drop-target");
 		});
 
-		groupHeader.addEventListener("dragleave", () => {
+		groupHeader.addEventListener("dragleave", (e) => {
+			// only clear the highlight when actually leaving the header, not when
+			// moving between its child elements (icon, name, grip, etc.) — a
+			// dragleave fires for those too, and clearing on every one of them
+			// is what causes the highlight (and anything reacting to it) to
+			// flicker on small headers where the pointer crosses many children
+			if (e.relatedTarget instanceof Node && groupHeader.contains(e.relatedTarget)) return;
 			groupHeader.removeClass("polis-group-drop-target");
 		});
 
 		groupHeader.addEventListener("drop", (e) => {
-			if (!this.draggedVault) return;
+			const canDropVault = !!this.draggedVault;
+			const canDropGroup = this.canDropGroupOnto(group, isTargetSubgroup);
+			if (!canDropVault && !canDropGroup) return;
+
 			e.preventDefault();
 			e.stopPropagation();
 			groupHeader.removeClass("polis-group-drop-target");
-			const { vaultId, fromGroupId } = this.draggedVault;
-			if (fromGroupId === group.id) return; // already in this group, nothing to do
-			this.plugin.moveVault(vaultId, fromGroupId, group.id, group.vaults.length);
+
+			if (this.draggedVault) {
+				const { vaultId, fromGroupId } = this.draggedVault;
+				if (fromGroupId === group.id) return; // already in this group, nothing to do
+				this.plugin.moveVault(vaultId, fromGroupId, group.id, group.vaults.length);
+			} else if (this.draggedGroup) {
+				this.plugin.makeSubgroupOf(this.draggedGroup.groupId, group.id);
+			}
 		});
+	}
+
+	/**
+	 * Whether the group currently being dragged (if any) can legally be
+	 * dropped onto `target` to become its subgroup: not itself, target must
+	 * be top-level, and the dragged group must not already have subgroups
+	 * of its own (which would create two levels of nesting under target).
+	 */
+	private canDropGroupOnto(target: PolisGroup, isTargetSubgroup: boolean): boolean {
+		if (!this.draggedGroup || isTargetSubgroup) return false;
+		if (this.draggedGroup.groupId === target.id) return false;
+		const draggedFullGroup = this.findGroupInSettings(this.draggedGroup.groupId);
+		if (draggedFullGroup && draggedFullGroup.subgroups.length > 0) return false;
+		return true;
+	}
+
+	/** Looks up a group (top-level or subgroup) by id from the plugin's current settings */
+	private findGroupInSettings(groupId: string): PolisGroup | null {
+		for (const group of this.plugin.settings.groups) {
+			if (group.id === groupId) return group;
+			const sub = group.subgroups.find((g) => g.id === groupId);
+			if (sub) return sub;
+		}
+		return null;
 	}
 
 	/** Clears any leftover drop-target highlight — called once a drag ends, regardless of outcome */
@@ -1083,8 +1169,70 @@ class PolisView extends ItemView {
 			.forEach((el) => el.removeClass("polis-group-drop-target"));
 	}
 
+	/**
+	 * SortableJS onMove guard: called continuously while dragging over a
+	 * potential target list, before the drop actually happens. Used here to
+	 * refuse letting a group with its own subgroups enter a *subgroups*
+	 * container — that would create two levels of nesting, which Polis
+	 * doesn't support. Top-level targets always accept.
+	 */
+	private canAcceptGroupMove(toContainer: HTMLElement): boolean {
+		const isSubgroupsContainer = toContainer.classList.contains("polis-subgroups-container");
+		if (!isSubgroupsContainer) return true;
+		if (!this.draggedGroup) return true;
+		const draggedFullGroup = this.findGroupInSettings(this.draggedGroup.groupId);
+		return !draggedFullGroup || draggedFullGroup.subgroups.length === 0;
+	}
+
+	/**
+	 * Shared onEnd handler for both the top-level groups list and every
+	 * subgroups container — since they share one SortableJS `group` id, an
+	 * item can end up in either kind of list regardless of which one it
+	 * started in. Which case happened is read off evt.from/evt.to:
+	 * - both top-level -> plain reorder among top-level groups
+	 * - both the same subgroups container -> plain reorder among subgroups
+	 * - subgroup dropped into the top-level list -> promote to top-level
+	 * - group dropped into a subgroups container -> becomes that subgroup
+	 */
+	private handleGroupSortableEnd(evt: Sortable.SortableEvent) {
+		this.draggedGroup = null;
+		this.clearGroupDropHighlight();
+
+		const groupId = (evt.item as HTMLElement).dataset.groupId;
+		if (!groupId || evt.newIndex === undefined) return;
+
+		const fromEl = evt.from as HTMLElement;
+		const toEl = evt.to as HTMLElement;
+		const toIsSubgroups = toEl.classList.contains("polis-subgroups-container");
+		const fromIsSubgroups = fromEl.classList.contains("polis-subgroups-container");
+
+		if (!toIsSubgroups) {
+			// landed in the top-level list — plain reorder, or promotion if it came from a subgroups container
+			if (fromIsSubgroups) {
+				this.plugin.promoteToTopLevel(groupId, evt.newIndex);
+			} else {
+				this.plugin.moveGroup(groupId, evt.newIndex);
+			}
+			return;
+		}
+
+		const toParentId = toEl.dataset.parentGroupId;
+		if (!toParentId) return;
+
+		if (!fromIsSubgroups) {
+			// a top-level group was dropped into a subgroups container -> becomes that subgroup
+			this.plugin.makeSubgroupOf(groupId, toParentId);
+			return;
+		}
+
+		const fromParentId = fromEl.dataset.parentGroupId;
+		if (!fromParentId) return;
+		this.plugin.moveSubgroup(groupId, fromParentId, toParentId, evt.newIndex);
+	}
+
 	private setupGroupSortable(groupsContainer: HTMLElement) {
 		const sortable = Sortable.create(groupsContainer, {
+			group: "polis-groups-and-subgroups",
 			animation: 180,
 			easing: "cubic-bezier(0.22, 1, 0.36, 1)",
 			handle: ".polis-grip",
@@ -1092,11 +1240,27 @@ class PolisView extends ItemView {
 			ghostClass: "polis-sortable-ghost",
 			chosenClass: "polis-sortable-chosen",
 			dragClass: "polis-sortable-drag",
-			onEnd: (evt: Sortable.SortableEvent) => {
+			// recommended by SortableJS itself for nested sortables with animation —
+			// without these, dragging into a small/empty target list causes the
+			// target to jitter/jump as the drop position keeps flip-flopping
+			fallbackOnBody: true,
+			invertSwap: true,
+			swapThreshold: 0.65,
+			/**
+			 * A subgroup being dragged may land in the top-level groups list —
+			 * that's how it gets promoted back to top-level. But a top-level
+			 * group that already has its own subgroups must never be allowed
+			 * to enter a *subgroup* list (that would create two nesting
+			 * levels), so onMove rejects that specific case before SortableJS
+			 * lets the drag proceed into a subgroups container.
+			 */
+			onMove: (evt) => this.canAcceptGroupMove(evt.to),
+			onStart: (evt: Sortable.SortableEvent) => {
 				const groupId = (evt.item as HTMLElement).dataset.groupId;
-				if (!groupId || evt.newIndex === undefined) return;
-				this.plugin.moveGroup(groupId, evt.newIndex);
+				const parentId = (evt.from as HTMLElement).dataset.parentGroupId;
+				if (groupId) this.draggedGroup = { groupId, wasSubgroupOfId: parentId ?? null };
 			},
+			onEnd: (evt: Sortable.SortableEvent) => this.handleGroupSortableEnd(evt),
 		});
 		this.sortableInstances.push(sortable);
 	}
@@ -1111,6 +1275,9 @@ class PolisView extends ItemView {
 			ghostClass: "polis-sortable-ghost",
 			chosenClass: "polis-sortable-chosen",
 			dragClass: "polis-sortable-drag",
+			fallbackOnBody: true,
+			invertSwap: true,
+			swapThreshold: 0.65,
 			onStart: (evt: Sortable.SortableEvent) => {
 				const vaultId = (evt.item as HTMLElement).dataset.vaultId;
 				const fromGroupId = (evt.from as HTMLElement).dataset.groupId;
@@ -1131,7 +1298,7 @@ class PolisView extends ItemView {
 
 	private setupSubgroupSortable(subgroupsContainer: HTMLElement) {
 		const sortable = Sortable.create(subgroupsContainer, {
-			group: "polis-subgroups",
+			group: "polis-groups-and-subgroups",
 			animation: 180,
 			easing: "cubic-bezier(0.22, 1, 0.36, 1)",
 			handle: ".polis-grip",
@@ -1139,13 +1306,16 @@ class PolisView extends ItemView {
 			ghostClass: "polis-sortable-ghost",
 			chosenClass: "polis-sortable-chosen",
 			dragClass: "polis-sortable-drag",
-			onEnd: (evt: Sortable.SortableEvent) => {
+			fallbackOnBody: true,
+			invertSwap: true,
+			swapThreshold: 0.65,
+			onMove: (evt) => this.canAcceptGroupMove(evt.to),
+			onStart: (evt: Sortable.SortableEvent) => {
 				const subgroupId = (evt.item as HTMLElement).dataset.groupId;
-				const fromParentId = (evt.from as HTMLElement).dataset.parentGroupId;
-				const toParentId = (evt.to as HTMLElement).dataset.parentGroupId;
-				if (!subgroupId || !fromParentId || !toParentId || evt.newIndex === undefined) return;
-				this.plugin.moveSubgroup(subgroupId, fromParentId, toParentId, evt.newIndex);
+				const parentId = (evt.from as HTMLElement).dataset.parentGroupId;
+				if (subgroupId) this.draggedGroup = { groupId: subgroupId, wasSubgroupOfId: parentId ?? null };
 			},
+			onEnd: (evt: Sortable.SortableEvent) => this.handleGroupSortableEnd(evt),
 		});
 		this.sortableInstances.push(sortable);
 	}
@@ -1836,6 +2006,7 @@ class PolisSettingTab extends PluginSettingTab {
 	};
 	private dirty = false;
 	private includeSettingsInExport = false;
+	private saveButtonRef: import("obsidian").ButtonComponent | undefined;
 
 	constructor(app: App, private plugin: PolisPlugin) {
 		super(app, plugin);
@@ -1853,6 +2024,7 @@ class PolisSettingTab extends PluginSettingTab {
 
 	private markDirty() {
 		this.dirty = true;
+		this.saveButtonRef?.setDisabled(false);
 	}
 
 	display() {
@@ -1874,6 +2046,17 @@ class PolisSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl).setName(t("settings.description.heading")).setHeading();
 
+		let vaultTooltipsToggleRef: import("obsidian").ToggleComponent | undefined;
+		let vaultTooltipsSettingRef: Setting | undefined;
+
+		const updateVaultTooltipsAvailability = () => {
+			const available = this.draft.infoVisibility === "groups" || this.draft.infoVisibility === "both";
+			vaultTooltipsToggleRef?.setDisabled(!available);
+			vaultTooltipsSettingRef?.setDesc(
+				available ? t("settings.vaultTooltips.desc") : t("settings.vaultTooltips.descUnavailable")
+			);
+		};
+
 		new Setting(containerEl)
 			.setName(t("settings.infoVisibility.name"))
 			.setDesc(t("settings.infoVisibility.desc"))
@@ -1882,6 +2065,7 @@ class PolisSettingTab extends PluginSettingTab {
 				dropdown.setValue(this.draft.infoVisibility).onChange((value) => {
 					this.draft.infoVisibility = value as PolisInfoVisibility;
 					this.markDirty();
+					updateVaultTooltipsAvailability();
 				});
 			});
 
@@ -1897,24 +2081,28 @@ class PolisSettingTab extends PluginSettingTab {
 				text.inputEl.addClass("polis-settings-textarea");
 			});
 
-		new Setting(containerEl)
+		vaultTooltipsSettingRef = new Setting(containerEl)
 			.setName(t("settings.vaultTooltips.name"))
 			.setDesc(t("settings.vaultTooltips.desc"))
 			.addToggle((toggle) => {
+				vaultTooltipsToggleRef = toggle;
 				toggle.setValue(this.draft.vaultTooltipsEnabled).onChange((value) => {
 					this.draft.vaultTooltipsEnabled = value;
 					this.markDirty();
 				});
 			});
+		updateVaultTooltipsAvailability();
 
 		new Setting(containerEl)
 			.addButton((btn) => btn.setButtonText(t("settings.cancel")).onClick(() => this.discardAndRefresh()))
-			.addButton((btn) =>
+			.addButton((btn) => {
+				this.saveButtonRef = btn;
 				btn
 					.setButtonText(t("settings.save"))
 					.setCta()
-					.onClick(() => this.saveDraft())
-			);
+					.setDisabled(!this.dirty)
+					.onClick(() => this.saveDraft());
+			});
 
 		new Setting(containerEl).setName(t("settings.data.heading")).setHeading();
 
