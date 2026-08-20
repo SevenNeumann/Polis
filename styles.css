@@ -96,25 +96,59 @@
 }
 
 /* ---- subgroups: nested one level deep ----
-   The whole subgroup block (header + its own vault list) is indented to the
-   same depth as a regular vault row, so it visually reads as nested inside
-   its parent group rather than floating at the same level. */
+   Rendered with the same tree-connector pattern as vault rows (trunk +
+   branch), so the vertical line continues unbroken from the last vault
+   straight into the subgroups list, with a horizontal branch reaching each
+   subgroup's chevron — instead of a separate indented block with a gap. */
 
 .polis-subgroups-container {
 	display: flex;
 	flex-direction: column;
-	margin-top: 4px;
 	margin-left: 10px;
-	padding-left: 10px;
-	border-left: 1px solid var(--nav-indentation-guide-color);
 }
 
-.polis-subgroups-container .polis-subgroup {
+/* empty containers exist purely as SortableJS drop targets (so a group with
+   no subgroups yet can still receive one via drag-and-drop) — give them a
+   small hit area in edit mode, otherwise a 0-height flex container has
+   nowhere for the pointer to land during a drag */
+.polis-edit-mode .polis-subgroups-container-empty {
+	min-height: 8px;
+}
+
+.polis-subgroup-row {
+	display: flex;
+	align-items: flex-start;
+}
+
+.polis-subgroup-row .polis-group {
+	flex: 1;
+	min-width: 0;
+	margin-bottom: 0;
+}
+
+.polis-subgroups-container .polis-subgroup-row {
 	margin-bottom: 10px;
 }
 
-.polis-subgroups-container .polis-subgroup:last-child {
+.polis-subgroups-container .polis-subgroup-row:last-child {
 	margin-bottom: 0;
+}
+
+/* the subgroup connector's trunk spans the whole row (header + its vault
+   list + its own subgroups, if any), continuing the parent's tree line */
+.polis-subgroup-connector {
+	align-self: stretch;
+}
+
+.polis-subgroup-row-last .polis-subgroup-connector .polis-tree-trunk {
+	bottom: auto;
+	height: 20px;
+}
+
+/* branch points at the chevron's vertical center, not the row's — the
+   chevron sits inside the group header, roughly one line down from the top */
+.polis-subgroup-connector .polis-tree-branch {
+	top: 14px;
 }
 
 .polis-group-header {
