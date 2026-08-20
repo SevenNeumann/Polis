@@ -99,7 +99,15 @@
    Rendered with the same tree-connector pattern as vault rows (trunk +
    branch), so the vertical line continues unbroken from the last vault
    straight into the subgroups list, with a horizontal branch reaching each
-   subgroup's chevron — instead of a separate indented block with a gap. */
+   subgroup's chevron — instead of a separate indented block with a gap.
+
+   Unlike a vault row (always one line tall), a subgroup row can grow much
+   taller once expanded (it has its own header + vault list + possibly more
+   subgroups). The branch/dot must stay pinned to the vertical center of the
+   subgroup's *header* specifically, not the row's overall height — so the
+   connector is a fixed-height sibling of the header (not a stretched column
+   spanning the whole row), sized to match the header via align-items on the
+   row itself rather than any hardcoded pixel value. */
 
 .polis-subgroups-container {
 	display: flex;
@@ -118,6 +126,7 @@
 .polis-subgroup-row {
 	display: flex;
 	align-items: flex-start;
+	position: relative;
 }
 
 .polis-subgroup-row .polis-group {
@@ -126,29 +135,52 @@
 	margin-bottom: 0;
 }
 
+/* no gap between subgroup rows — the trunk must stay visually unbroken from
+   one subgroup straight into the next, exactly like vault rows do */
 .polis-subgroups-container .polis-subgroup-row {
-	margin-bottom: 10px;
-}
-
-.polis-subgroups-container .polis-subgroup-row:last-child {
 	margin-bottom: 0;
 }
 
-/* the subgroup connector's trunk spans the whole row (header + its vault
-   list + its own subgroups, if any), continuing the parent's tree line */
+/* continues the trunk line down past the 28px connector, along the rest of
+   the row's height — needed when a subgroup is expanded, since its own
+   content (vault list, further nesting) makes the row taller than the fixed
+   28px connector above can cover on its own. Absolutely positioned (rather
+   than a flex sibling) so it doesn't push .polis-group to the right. */
+.polis-subgroup-trunk-continuation {
+	position: absolute;
+	left: 0;
+	top: 28px;
+	bottom: 0;
+	width: 18px;
+	pointer-events: none;
+}
+
+.polis-subgroup-trunk-continuation::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	border-inline-start: var(--nav-indentation-guide-width) solid var(--nav-indentation-guide-color);
+}
+
+/* the connector is exactly as tall as the header row (28px matches
+   .polis-group-header's ~24px content + its 2px top/bottom padding) — a
+   fixed height, not a stretch-to-fit-content. The branch and dot both use
+   the base .polis-tree-branch / .polis-tree-connector::after rules, which
+   position at top: 50% of the connector — so they land at the header's
+   center automatically and stay there regardless of how tall the rest of
+   the row grows once the subgroup is expanded. */
 .polis-subgroup-connector {
-	align-self: stretch;
+	height: 28px;
+	align-self: flex-start;
 }
 
+/* every row's trunk normally spans the connector's full height so it meets
+   the next row's trunk with no gap; the last row's trunk stops at its own
+   center instead, exactly like the last vault in a list */
 .polis-subgroup-row-last .polis-subgroup-connector .polis-tree-trunk {
-	bottom: auto;
-	height: 20px;
-}
-
-/* branch points at the chevron's vertical center, not the row's — the
-   chevron sits inside the group header, roughly one line down from the top */
-.polis-subgroup-connector .polis-tree-branch {
-	top: 14px;
+	bottom: 50%;
 }
 
 .polis-group-header {

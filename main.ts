@@ -1004,6 +1004,16 @@ class PolisView extends ItemView {
 					connector.createDiv({ cls: "polis-tree-trunk" });
 					connector.createDiv({ cls: "polis-tree-branch" });
 
+					// separate full-height trunk continuation, needed only when this
+					// isn't the last subgroup: when a subgroup is expanded, its own
+					// content (vault list, further nesting) pushes the row much
+					// taller than the 28px connector above — without this, the main
+					// trunk would visibly break across that expanded content on its
+					// way down to the next subgroup
+					if (!isLastSubgroup) {
+						row.createDiv({ cls: "polis-subgroup-trunk-continuation" });
+					}
+
 					this.renderGroup(row, subgroup, true);
 				});
 				if (this.editMode) {
