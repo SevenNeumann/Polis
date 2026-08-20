@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-polis",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"description": "Group your vaults into contexts and switch between them in one click.",
 	"main": "main.js",
 	"scripts": {

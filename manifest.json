@@ -1,7 +1,7 @@
 {
 	"id": "polis",
 	"name": "Polis",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"minAppVersion": "1.4.0",
 	"description": "Group your vaults into contexts and switch between them in one click.",
 	"author": "Mark",
